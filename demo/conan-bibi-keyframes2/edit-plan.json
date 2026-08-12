@@ -1,0 +1,100 @@
+{
+  "version": "1.0",
+  "profile": {
+    "width": 1280,
+    "height": 720,
+    "frame_rate": {
+      "numerator": 25,
+      "denominator": 1
+    },
+    "sample_rate": 44100,
+    "channels": 2,
+    "progressive": true,
+    "colorspace": 709
+  },
+  "assets": [
+    {
+      "id": "Conan_bibi",
+      "path": "../assets/Conan_bibi.mp4",
+      "kind": "video",
+      "duration_frames": 799,
+      "fingerprint": "sha256:557be8cf49536b94c9e767c4cd6ec1c4027753e0a7aa393d0b0e04b16e896dbe",
+      "probe": {
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "duration_seconds": "15983719/500000",
+        "size_bytes": 7866711,
+        "video": {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720,
+          "pixel_format": "yuv420p",
+          "avg_frame_rate": "25/1",
+          "r_frame_rate": "25/1",
+          "time_base": "1/12800",
+          "duration_frames": 797,
+          "color_space": "bt709",
+          "progressive": true
+        },
+        "audio": {
+          "codec": "aac",
+          "sample_rate": 44100,
+          "channels": 2,
+          "channel_layout": "stereo"
+        },
+        "tags": {
+          "title": "PM Netanyahu meets with Conan O'Brien",
+          "artist": "IsraeliPM"
+        }
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "id": "v1",
+      "kind": "video",
+      "name": "Smooth Conan and dog reframing",
+      "clips": [
+        {
+          "id": "meeting-clip",
+          "asset_id": "Conan_bibi",
+          "timeline_start": 0,
+          "source_in": 0,
+          "duration": 799,
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "id": "smooth-subject-reframing",
+      "type": "transform",
+      "target": "meeting-clip",
+      "start": 0,
+      "duration": 799,
+      "keyframes": [
+        {"frame": 0, "geometry": "0%/0%:100%x100%"},
+        {"frame": 74, "geometry": "0%/0%:100%x100%"},
+        {"frame": 75, "geometry": "0%/0%:100%x100%"},
+        {"frame": 125, "geometry": "-45%/-20%:160%x160%"},
+        {"frame": 149, "geometry": "-45%/-20%:160%x160%"},
+        {"frame": 150, "geometry": "-45%/-20%:160%x160%"},
+        {"frame": 275, "geometry": "0%/-5%:125%x125%"},
+        {"frame": 549, "geometry": "0%/-5%:125%x125%"},
+        {"frame": 550, "geometry": "0%/-5%:125%x125%"},
+        {"frame": 600, "geometry": "-62%/-25%:190%x190%"},
+        {"frame": 724, "geometry": "-62%/-25%:190%x190%"},
+        {"frame": 725, "geometry": "-62%/-25%:190%x190%"},
+        {"frame": 798, "geometry": "-110%/-65%:210%x210%"}
+      ]
+    }
+  ],
+  "export": {
+    "format": "mp4",
+    "video_codec": "libx264",
+    "audio_codec": "aac",
+    "audio_bitrate": "192k",
+    "pixel_format": "yuv420p",
+    "movflags": "+faststart"
+  }
+}

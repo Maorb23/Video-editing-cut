@@ -1,0 +1,33 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mlt LC_NUMERIC="C" version="7.28.0" title="project-pass-002" producer="ves_main" root="C:\Users\maorb\work\video_editing_skill\demo\conan-bibi-keyframes2">
+  <profile description="Video Editing Skill profile" width="1280" height="720" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="1280" display_aspect_den="720" frame_rate_num="25" frame_rate_den="1" colorspace="709" />
+  <producer id="ves_producer_0_0_meeting-clip" in="00:00:00.000000" out="00:00:31.920000">
+    <property name="resource">C:\Users\maorb\work\video_editing_skill\demo\assets\Conan_bibi.mp4</property>
+    <property name="mlt_service">avformat-novalidate</property>
+    <property name="length">00:00:31.960000</property>
+    <property name="shotcut:caption">meeting-clip</property>
+    <property name="video-editing-skill:asset-id">Conan_bibi</property>
+    <filter id="ves_filter_smooth-subject-reframing" in="00:00:00.000000" out="00:00:31.920000">
+      <property name="mlt_service">affine</property>
+      <property name="transition.rotate_x">0</property>
+      <property name="transition.geometry">0=0%/0%:100%x100%;74=0%/0%:100%x100%;75=0%/0%:100%x100%;125=-45%/-20%:160%x160%;149=-45%/-20%:160%x160%;150=-45%/-20%:160%x160%;275=0%/-5%:125%x125%;549=0%/-5%:125%x125%;550=0%/-5%:125%x125%;600=-62%/-25%:190%x190%;724=-62%/-25%:190%x190%;725=-62%/-25%:190%x190%;798=-110%/-65%:210%x210%</property>
+      <property name="transition.mix">1</property>
+    </filter>
+  </producer>
+  <playlist id="ves_playlist_0_v1">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:audio">0</property>
+    <property name="shotcut:name">Smooth Conan and dog reframing</property>
+    <entry producer="ves_producer_0_0_meeting-clip" in="00:00:00.000000" out="00:00:31.920000" />
+  </playlist>
+  <tractor id="ves_main" title="Shotcut-compatible edit">
+    <property name="shotcut">1</property>
+    <property name="shotcut:projectAudioChannels">2</property>
+    <property name="shotcut:projectFolder">0</property>
+    <property name="video-editing-skill:generator">video-editing-skill/0.1.0</property>
+    <property name="video-editing-skill:filter-catalog">mlt-7.28-shotcut-24.06</property>
+    <multitrack>
+      <track producer="ves_playlist_0_v1" />
+    </multitrack>
+  </tractor>
+</mlt>

@@ -1,0 +1,19 @@
+{
+  "name": "video-editing-skill",
+  "version": "0.1.0",
+  "description": "Plan, compile, render, inspect, and refine deterministic Shotcut-compatible video edits.",
+  "author": { "name": "video-editing-skill contributors" },
+  "license": "MIT",
+  "keywords": ["video", "shotcut", "mlt", "editing", "rendering"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Video Editing",
+    "shortDescription": "Create inspectable Shotcut video edits.",
+    "longDescription": "Translate creative editing requests into validated plans, editable MLT projects, rendered MP4 files, and review evidence.",
+    "developerName": "video-editing-skill contributors",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": ["Edit these clips into a concise video.", "Generate an editable Shotcut project from this plan.", "Inspect and correct this rendered edit."]
+  }
+}
+

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-editing-skill"
+version = "0.1.0"
+description = "Deterministic typed edit plans and Shotcut-compatible MLT projects"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "video-editing-skill contributors" }]
+dependencies = []
+
+[project.scripts]
+video-edit-check = "video_editing.cli.check_environment:main"
+video-edit-probe = "video_editing.cli.probe_media:main"
+video-edit-validate = "video_editing.cli.validate_edit_plan:main"
+video-edit-compile = "video_editing.cli.compile_project:main"
+video-edit-render = "video_editing.cli.render_project:main"
+video-edit-inspect = "video_editing.cli.inspect_video:main"
+video-edit-viewer = "video_editing.cli.video_viewer:main"
+
+[tool.setuptools.packages.find]
+include = ["video_editing*"]
+

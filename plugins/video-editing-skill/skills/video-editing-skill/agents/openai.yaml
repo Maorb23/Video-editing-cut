@@ -1,0 +1,5 @@
+interface:
+  display_name: "Video Editing"
+  short_description: "Build and review deterministic Shotcut edits"
+  default_prompt: "Use $video-editing-skill to plan, compile, render, inspect, and refine this video edit."
+

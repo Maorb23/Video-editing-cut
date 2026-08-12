@@ -1,0 +1,100 @@
+{
+  "version": "1.0",
+  "profile": {
+    "width": 1280,
+    "height": 720,
+    "frame_rate": {
+      "numerator": 30000,
+      "denominator": 1001
+    },
+    "sample_rate": 44100,
+    "channels": 2,
+    "progressive": true,
+    "colorspace": 709
+  },
+  "assets": [
+    {
+      "id": "Lebron_dunk",
+      "path": "assets/Lebron_dunk.mp4",
+      "kind": "video",
+      "duration_frames": 925,
+      "fingerprint": "sha256:ba67c11af0e7527285a762c760620844025a92bd75b6f8adacee9413c9034e06",
+      "probe": {
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "duration_seconds": "15481179/500000",
+        "size_bytes": 9365239,
+        "video": {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720,
+          "pixel_format": "yuv420p",
+          "avg_frame_rate": "30000/1001",
+          "r_frame_rate": "30000/1001",
+          "time_base": "1/30000",
+          "duration_frames": 925,
+          "color_space": "bt709",
+          "progressive": true
+        },
+        "audio": {
+          "codec": "aac",
+          "sample_rate": 44100,
+          "channels": 2,
+          "channel_layout": "stereo"
+        },
+        "tags": {
+          "title": "LeBron James Explodes on the Rim with the Tomahawk Jam",
+          "artist": "NBA"
+        }
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "id": "v1",
+      "kind": "video",
+      "name": "LeBron dunk highlight",
+      "clips": [
+        {
+          "id": "dunk-clip",
+          "asset_id": "Lebron_dunk",
+          "timeline_start": 0,
+          "source_in": 0,
+          "duration": 925,
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "id": "trim-main-dunk",
+      "type": "trim",
+      "target": "dunk-clip",
+      "source_in": 345,
+      "duration": 339
+    },
+    {
+      "id": "caption-king-james",
+      "type": "caption",
+      "target": "dunk-clip",
+      "start": 180,
+      "duration": 135,
+      "text": "King james",
+      "font": "Sans",
+      "size": 54,
+      "color": "#fdb927ff",
+      "background": "#00000099",
+      "geometry": "58%/7%:38%x13%",
+      "halign": "center",
+      "valign": "middle"
+    }
+  ],
+  "export": {
+    "format": "mp4",
+    "video_codec": "libx264",
+    "audio_codec": "aac",
+    "audio_bitrate": "192k",
+    "pixel_format": "yuv420p",
+    "movflags": "+faststart"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "profile": {
+    "width": 1920,
+    "height": 1080,
+    "frame_rate": {"numerator": 30000, "denominator": 1001},
+    "sample_rate": 48000,
+    "channels": 2,
+    "progressive": true,
+    "colorspace": 709
+  },
+  "assets": [
+    {
+      "id": "input",
+      "path": "assets/input.mp4",
+      "kind": "video",
+      "duration_frames": 300,
+      "fingerprint": "sha256:replace-with-probe-output",
+      "probe": {}
+    }
+  ],
+  "tracks": [
+    {
+      "id": "v1",
+      "kind": "video",
+      "name": "Primary video",
+      "clips": [
+        {"id": "clip-001", "asset_id": "input", "timeline_start": 0, "source_in": 0, "duration": 300}
+      ]
+    }
+  ],
+  "operations": [
+    {"id": "caption-001", "type": "caption", "target": "clip-001", "start": 30, "duration": 60, "text": "Frame-accurate editing"}
+  ],
+  "export": {"format": "mp4", "video_codec": "libx264", "audio_codec": "aac", "pixel_format": "yuv420p"}
+}
+
