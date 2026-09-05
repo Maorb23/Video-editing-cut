@@ -21,7 +21,7 @@ PLAN_VERSION = "1.0"
 OP_TYPES = {
     "trim", "split", "remove", "insert", "reorder", "transition", "caption",
     "overlay", "transform", "volume", "fade_audio", "audio_mix", "speed",
-    "chroma_key", "mask", "filter",
+    "chroma_key", "mask", "filter", "color_grade", "parametric_eq", "reverb", "dereverb",
 }
 
 OP_FIELDS: dict[str, set[str]] = {
@@ -41,6 +41,10 @@ OP_FIELDS: dict[str, set[str]] = {
     "chroma_key": {"color", "variance", "edge"},
     "mask": {"resource", "mode", "softness", "invert"},
     "filter": {"name", "properties"},
+    "color_grade": {"tint", "brightness", "contrast", "saturation", "keyframes", "interpolation", "mask"},
+    "parametric_eq": {"bands"},
+    "reverb": {"room_size", "damping", "wet", "dry", "pre_delay_ms"},
+    "dereverb": {"derived_asset_id", "model", "model_sha256"},
 }
 
 OP_REQUIRED: dict[str, set[str]] = {
@@ -51,6 +55,8 @@ OP_REQUIRED: dict[str, set[str]] = {
     "transform": set(), "volume": set(), "fade_audio": {"direction", "duration"},
     "audio_mix": set(), "speed": {"factor"}, "chroma_key": set(),
     "mask": {"resource"}, "filter": {"name", "properties"},
+    "color_grade": set(), "parametric_eq": {"bands"}, "reverb": set(),
+    "dereverb": {"derived_asset_id", "model", "model_sha256"},
 }
 
 COMMON_OP_FIELDS = {"id", "type", "target", "start", "duration", "enabled"}
@@ -60,6 +66,9 @@ ASSET_FIELDS = {"id", "path", "kind", "duration_frames", "fingerprint", "probe"}
 TRACK_FIELDS = {"id", "kind", "name", "clips", "muted", "hidden"}
 CLIP_FIELDS = {"id", "asset_id", "timeline_start", "source_in", "duration", "enabled"}
 EXPORT_FIELDS = {"format", "video_codec", "audio_codec", "video_bitrate", "audio_bitrate", "pixel_format", "movflags"}
+COLOR_KEY_FIELDS = {"frame", "tint", "brightness", "contrast", "saturation"}
+MASK_FIELDS = {"resource", "softness", "invert"}
+EQ_BAND_FIELDS = {"frequency", "gain_db", "q"}
 
 
 @dataclass(frozen=True)
@@ -427,6 +436,81 @@ def validate_plan(
                     previous_frame = keyframe.get("frame", previous_frame) if isinstance(keyframe.get("frame"), int) else previous_frame
         if kind == "transform" and operation.get("interpolation", "linear") != "linear":
             issues.append(Issue("unsupported_transform_property", f"{opath}.interpolation", "only linear interpolation is supported"))
+        if kind == "color_grade":
+            if operation.get("interpolation", "linear") != "linear":
+                issues.append(Issue("unsupported_color_property", f"{opath}.interpolation", "only linear interpolation is supported"))
+            for field in ("brightness", "contrast", "saturation"):
+                if field in operation and (not _number(operation[field]) or operation[field] < -1 or operation[field] > 3):
+                    issues.append(Issue("invalid_color_grade", f"{opath}.{field}", "must be a finite number from -1 through 3"))
+            if "tint" in operation and not _color(operation["tint"]):
+                issues.append(Issue("invalid_color", f"{opath}.tint", "must be #RRGGBB or #RRGGBBAA"))
+            mask = operation.get("mask")
+            if mask is not None:
+                if not isinstance(mask, dict):
+                    issues.append(Issue("invalid_mask", f"{opath}.mask", "must be an object"))
+                else:
+                    _unknown(mask, MASK_FIELDS, f"{opath}.mask", issues)
+                    if not isinstance(mask.get("resource"), str) or not mask.get("resource"):
+                        issues.append(Issue("invalid_mask", f"{opath}.mask.resource", "must be a nonempty plan-relative path"))
+                    elif require_confined_paths and not _safe_relative_path(mask["resource"], base):
+                        issues.append(Issue("unsafe_path", f"{opath}.mask.resource", "must be a job-relative path"))
+                    elif check_files and not (base / mask["resource"]).is_file():
+                        issues.append(Issue("missing_asset", f"{opath}.mask.resource", "mask file does not exist"))
+                    if "softness" in mask and not _unit_interval(mask["softness"]):
+                        issues.append(Issue("invalid_mask", f"{opath}.mask.softness", "must be from 0 through 1"))
+                    if "invert" in mask and not isinstance(mask["invert"], bool):
+                        issues.append(Issue("invalid_mask", f"{opath}.mask.invert", "must be a boolean"))
+            keys = operation.get("keyframes", [])
+            if not isinstance(keys, list):
+                issues.append(Issue("invalid_keyframes", f"{opath}.keyframes", "must be an array"))
+            else:
+                previous = -1
+                for ki, key in enumerate(keys):
+                    kp = f"{opath}.keyframes[{ki}]"
+                    if not isinstance(key, dict) or set(key) - COLOR_KEY_FIELDS:
+                        issues.append(Issue("invalid_keyframe", kp, "contains unsupported color keyframe properties")); continue
+                    frame = key.get("frame")
+                    if not _frame(frame) or frame <= previous or len(key) == 1:
+                        issues.append(Issue("invalid_keyframe", kp, "frames must increase and include a color value"))
+                    if "tint" in key and not _color(key["tint"]):
+                        issues.append(Issue("invalid_color", f"{kp}.tint", "must be #RRGGBB or #RRGGBBAA"))
+                    for field in ("brightness", "contrast", "saturation"):
+                        if field in key and (not _number(key[field]) or key[field] < -1 or key[field] > 3):
+                            issues.append(Issue("invalid_color_grade", f"{kp}.{field}", "must be from -1 through 3"))
+                    if isinstance(frame, int): previous = frame
+        if kind == "parametric_eq":
+            bands = operation.get("bands")
+            if not isinstance(bands, list) or not 1 <= len(bands) <= 16:
+                issues.append(Issue("invalid_equalizer", f"{opath}.bands", "must contain 1 through 16 bands"))
+            else:
+                for bi, band in enumerate(bands):
+                    bp = f"{opath}.bands[{bi}]"
+                    if not isinstance(band, dict):
+                        issues.append(Issue("invalid_equalizer", bp, "must be an object")); continue
+                    _unknown(band, EQ_BAND_FIELDS, bp, issues)
+                    if set(band) != EQ_BAND_FIELDS:
+                        issues.append(Issue("invalid_equalizer", bp, "requires frequency, gain_db, and q")); continue
+                    if not _number(band["frequency"]) or not 20 <= band["frequency"] <= 20000:
+                        issues.append(Issue("invalid_equalizer", f"{bp}.frequency", "must be 20 through 20000 Hz"))
+                    if not _number(band["gain_db"]) or not -24 <= band["gain_db"] <= 24:
+                        issues.append(Issue("invalid_equalizer", f"{bp}.gain_db", "must be -24 through 24 dB"))
+                    if not _number(band["q"]) or not 0.1 <= band["q"] <= 20:
+                        issues.append(Issue("invalid_equalizer", f"{bp}.q", "must be 0.1 through 20"))
+        if kind == "reverb":
+            for field in ("room_size", "damping", "wet", "dry"):
+                if field in operation and not _unit_interval(operation[field]):
+                    issues.append(Issue("invalid_reverb", f"{opath}.{field}", "must be from 0 through 1"))
+            if "pre_delay_ms" in operation and (not _number(operation["pre_delay_ms"]) or not 0 <= operation["pre_delay_ms"] <= 500):
+                issues.append(Issue("invalid_reverb", f"{opath}.pre_delay_ms", "must be from 0 through 500"))
+        if kind == "dereverb":
+            if operation.get("derived_asset_id") not in asset_ids:
+                issues.append(Issue("missing_asset", f"{opath}.derived_asset_id", "must identify an immutable derived audio asset"))
+            elif asset_lookup[operation["derived_asset_id"]].get("kind") != "audio":
+                issues.append(Issue("incompatible_media_kind", f"{opath}.derived_asset_id", "must identify an audio asset"))
+            if operation.get("model") != "deepfilternet3-local":
+                issues.append(Issue("unsupported_dereverb_model", f"{opath}.model", "must use pinned deepfilternet3-local"))
+            if not isinstance(operation.get("model_sha256"), str) or re.fullmatch(r"sha256:[0-9a-f]{64}", operation.get("model_sha256", "")) is None:
+                issues.append(Issue("invalid_fingerprint", f"{opath}.model_sha256", "must pin the local model with SHA-256"))
         if kind == "volume" and "level" in operation and "gain_db" in operation:
             issues.append(Issue("conflicting_operation_property", opath, "volume must use level or gain_db, not both"))
 
@@ -463,7 +547,8 @@ def validate_plan(
                     asset = asset_lookup[clip["asset_id"]]
                     if clip["source_in"] + clip["duration"] > asset["duration_frames"]:
                         issues.append(Issue("invalid_range", "$.operations", f"resolved clip {clip['id']!r} exceeds asset duration"))
-            timed_effects = {"caption", "overlay", "transform", "volume", "fade_audio", "chroma_key", "mask", "filter"}
+            timed_effects = {"caption", "overlay", "transform", "volume", "fade_audio", "chroma_key", "mask", "filter",
+                             "color_grade", "parametric_eq", "reverb", "dereverb"}
             speed_targets: set[str] = set()
             transform_spans: dict[str, list[tuple[int, int]]] = {}
             if not active_clip_ids:

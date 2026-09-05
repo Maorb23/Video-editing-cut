@@ -330,6 +330,19 @@ def inspect(
         for name, filter_args in analyses.items():
             result = run_checked([ffmpeg_bin, "-hide_banner", "-i", str(video), *filter_args, "-f", "null", "-"])
             audio_evidence[name] = result.stderr[-12000:]
+        mean_match = re.findall(r"mean_volume:\s*(-?[\d.]+) dB", audio_evidence["volume"])
+        peak_match = re.findall(r"max_volume:\s*(-?[\d.]+) dB", audio_evidence["volume"])
+        silence_ends = re.findall(r"silence_end:\s*([\d.]+)", audio_evidence["silence"])
+        audio_evidence["measurements"] = {
+            "mean_db": float(mean_match[-1]) if mean_match else None,
+            "peak_db": float(peak_match[-1]) if peak_match else None,
+            "last_silence_end_seconds": float(silence_ends[-1]) if silence_ends else None,
+            "effects": [
+                {"operation_id": op.get("id"), "type": op.get("type"),
+                 "decision": "derived immutable audio" if op.get("type") == "dereverb" else "curated MLT avfilter"}
+                for op in plan.get("operations", []) if op.get("type") in {"parametric_eq", "reverb", "dereverb"}
+            ],
+        }
         waveform = pass_dir / "waveform.png"
         run_checked([ffmpeg_bin, "-v", "error", "-i", str(video), "-filter_complex", "showwavespic=s=1600x320:colors=0x33aaff", "-frames:v", "1", str(waveform)])
         audio_evidence["waveform"] = str(waveform.resolve())

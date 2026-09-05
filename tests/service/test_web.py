@@ -19,8 +19,9 @@ class WebApplicationTests(IsolatedAsyncioTestCase):
     async def test_home_page_and_assets_expose_the_approval_gated_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024)
-            transport = httpx.ASGITransport(app=create_app(settings, FakeRepository(), FilesystemStorage(settings.storage_root), blocking_runner=run_inline))
+            settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024, session_cookie_secure=False)
+            repo = FakeRepository()
+            transport = httpx.ASGITransport(app=create_app(settings, repo, FilesystemStorage(settings.storage_root), blocking_runner=run_inline, authentication=repo))
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                 page = await client.get("/")
                 script = await client.get("/web/app.js")
@@ -32,8 +33,14 @@ class WebApplicationTests(IsolatedAsyncioTestCase):
         self.assertIn('id="render-video"', page.text)
         self.assertIn('id="feedback-form"', page.text)
         self.assertIn('id="create-error"', page.text)
+        self.assertIn('id="login-form"', page.text)
+        self.assertIn('id="register-form"', page.text)
+        self.assertIn('id="profile-panel"', page.text)
+        self.assertIn('id="open-profile"', page.text)
+        self.assertIn("No video is rendered until you approve this plan.", page.text)
         self.assertNotIn("kicker", page.text.lower())
         self.assertEqual(script.status_code, 200)
+        self.assertEqual(script.headers["cache-control"], "no-store")
         self.assertIn("awaiting_approval", script.text)
         self.assertIn("localStorage", script.text)
         self.assertIn("/v1/edits/", script.text)

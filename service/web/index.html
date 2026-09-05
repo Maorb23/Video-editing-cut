@@ -5,18 +5,66 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#111827">
     <title>Video editor</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%23182730%22/><path d=%22m12 9 11 7-11 7z%22 fill=%22white%22/></svg>">
     <link rel="stylesheet" href="/web/styles.css">
   </head>
   <body>
     <main class="shell">
       <header class="site-header">
-        <a class="brand" href="/" aria-label="Video editor home">Video editor</a>
-        <button id="export-feedback" class="button button-secondary" type="button">Export feedback</button>
+        <a class="brand" href="/" aria-label="Video editor home"><span class="brand-mark" aria-hidden="true"></span>Video editor</a>
+        <div class="header-actions">
+          <span id="user-email" class="user-email hidden"></span>
+          <button id="open-profile" class="button button-quiet hidden" type="button">Profile</button>
+          <button id="logout" class="button button-quiet hidden" type="button">Log out</button>
+          <button id="export-feedback" class="button button-quiet hidden" type="button">Export feedback</button>
+        </div>
       </header>
 
-      <section id="start-panel" class="panel" aria-labelledby="create-edit-heading">
+      <section id="auth-panel" class="panel auth-panel" aria-labelledby="auth-heading">
+        <div class="auth-intro">
+          <h1 id="auth-heading">Turn footage into a finished edit</h1>
+          <p>Upload your video, describe the result you want, and review every change before the final render.</p>
+          <ul class="feature-list">
+            <li>Review the complete plan before rendering</li>
+            <li>Request changes without losing earlier versions</li>
+            <li>Download only the render you approve</li>
+          </ul>
+        </div>
+        <div class="auth-forms">
+          <form id="login-form" class="auth-form" aria-labelledby="login-heading">
+            <h2 id="login-heading">Sign in</h2>
+            <label for="login-email">Email</label>
+            <input id="login-email" type="email" required autocomplete="email" placeholder="you@example.com">
+            <label for="login-password">Password</label>
+            <input id="login-password" type="password" required autocomplete="current-password">
+            <button id="login-submit" class="button button-wide" type="submit">Sign in</button>
+            <p id="login-error" class="form-error hidden" role="alert"></p>
+          </form>
+          <form id="register-form" class="auth-form" aria-labelledby="register-heading">
+            <h2 id="register-heading">Create an account</h2>
+            <label for="register-email">Email</label>
+            <input id="register-email" type="email" required autocomplete="email" placeholder="you@example.com">
+            <label for="register-password">Password <span class="label-hint">8 characters minimum</span></label>
+            <input id="register-password" type="password" minlength="8" required autocomplete="new-password">
+            <button id="register-submit" class="button button-secondary button-wide" type="submit">Create account</button>
+            <p id="register-error" class="form-error hidden" role="alert"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="profile-panel" class="panel profile-panel hidden" aria-labelledby="profile-heading">
+        <h1 id="profile-heading">Profile</h1>
+        <p>Your account details and active session.</p>
+        <dl class="profile-details">
+          <div><dt>Email</dt><dd id="profile-email"></dd></div>
+          <div><dt>Account ID</dt><dd id="profile-id"></dd></div>
+        </dl>
+        <button id="close-profile" class="button button-secondary" type="button">Back to editor</button>
+      </section>
+
+      <section id="start-panel" class="panel hidden" aria-labelledby="create-edit-heading">
         <h1 id="create-edit-heading">Create a video edit</h1>
-        <p>Upload a video, describe the change, then review the plan and preview. Request changes or approve a final render.</p>
+        <p>Upload a video, describe the change, then review or revise the plan before rendering begins.</p>
         <form id="create-edit-form">
           <label for="video-file">Video file</label>
           <input id="video-file" name="file" type="file" accept="video/*" required>
@@ -36,31 +84,38 @@
       </section>
 
       <section id="plan-panel" class="panel hidden" aria-labelledby="plan-heading">
-        <h1 id="plan-heading">Review the proposed plan</h1>
-        <label for="iteration-selector">Iteration</label>
-        <select id="iteration-selector"></select>
-        <p id="iteration-status" role="status"></p>
+        <div class="panel-heading">
+          <h1 id="plan-heading">Review the proposed plan</h1>
+          <label class="version-picker" for="iteration-selector">Iteration<select id="iteration-selector"></select></label>
+        </div>
+        <p id="iteration-status" class="plan-status" role="status"></p>
         <video id="preview-video" class="hidden" controls playsinline preload="metadata"></video>
-        <p id="plan-summary"></p>
+        <section class="plan-summary" aria-labelledby="plan-summary-heading">
+          <h2 id="plan-summary-heading">Plan summary</h2>
+          <p id="plan-summary"></p>
+        </section>
         <div id="plan-warnings" class="warnings hidden" role="alert"></div>
-        <h2>Observations</h2>
-        <div id="observations"></div>
-        <h2>Decisions</h2>
-        <div id="decisions"></div>
-        <h2>Unsupported requests</h2>
-        <div id="unsupported"></div>
-        <h2>Assumptions</h2>
-        <div id="assumptions"></div>
-        <p><a id="inspection-link" class="hidden" target="_blank" rel="noopener">View inspection report</a></p>
-        <p><a id="iteration-download" class="button hidden" download>Download this iteration</a></p>
-        <details>
+        <div class="review-grid">
+          <section class="review-section" aria-labelledby="observations-heading"><h2 id="observations-heading">Observations</h2><div id="observations" class="rationale-list"></div></section>
+          <section class="review-section" aria-labelledby="decisions-heading"><h2 id="decisions-heading">Decisions</h2><div id="decisions" class="rationale-list"></div></section>
+          <section class="review-section" aria-labelledby="unsupported-heading"><h2 id="unsupported-heading">Unsupported requests</h2><div id="unsupported" class="simple-list"></div></section>
+          <section class="review-section" aria-labelledby="assumptions-heading"><h2 id="assumptions-heading">Assumptions</h2><div id="assumptions" class="simple-list"></div></section>
+        </div>
+        <div class="artifact-links">
+          <a id="inspection-link" class="text-link hidden" target="_blank" rel="noopener">View inspection report</a>
+          <a id="iteration-download" class="text-link hidden" download>Download this iteration</a>
+        </div>
+        <details class="plan-json">
           <summary>View edit-plan JSON</summary>
           <pre id="plan-document"></pre>
         </details>
-        <button id="approve-plan" class="button" type="button">Approve and render</button>
-        <p class="muted">Previews render automatically. Approval starts a final render of the selected iteration.</p>
-        <form id="revision-form">
-          <label for="revision-instruction">Request changes</label>
+        <div class="review-actions">
+          <button id="approve-plan" class="button" type="button">Approve and render</button>
+          <p class="muted">No video is rendered until you approve this plan.</p>
+        </div>
+        <form id="revision-form" class="revision-form">
+          <h2>Request changes</h2>
+          <label for="revision-instruction">Describe what should change</label>
           <textarea id="revision-instruction" rows="3" maxlength="20000" required placeholder="Make the zoom less aggressive and brighten the video more."></textarea>
           <p class="muted">Changes build on the latest plan and use the original source. Previous results stay available.</p>
           <button id="request-changes" class="button button-secondary" type="submit">Request another iteration</button>

@@ -24,9 +24,9 @@ def _field_schema(name: str) -> dict[str, Any]:
         return {"type": "integer", "minimum": 0}
     if name in {"duration", "size"}:
         return {"type": "integer", "minimum": 1}
-    if name in {"opacity", "variance", "softness", "from", "to"}:
+    if name in {"opacity", "variance", "softness", "from", "to", "room_size", "damping", "wet", "dry"}:
         return {"type": "number", "minimum": 0, "maximum": 1}
-    if name in {"rotation", "gain_db", "factor"}:
+    if name in {"rotation", "gain_db", "factor", "brightness", "contrast", "saturation", "pre_delay_ms"}:
         return {"type": "number"}
     if name == "invert":
         return {"type": "boolean"}
@@ -54,11 +54,27 @@ def _field_schema(name: str) -> dict[str, Any]:
                     "frame": {"type": "integer", "minimum": 0},
                     "geometry": {"anyOf": [{"type": "string", "maxLength": 128}, {"type": "null"}]},
                     "opacity": {"anyOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]},
+                    "tint": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                    "brightness": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+                    "contrast": {"anyOf": [{"type": "number"}, {"type": "null"}]},
+                    "saturation": {"anyOf": [{"type": "number"}, {"type": "null"}]},
                 },
-                "required": ["frame", "geometry", "opacity"],
+                "required": ["frame", "geometry", "opacity", "tint", "brightness", "contrast", "saturation"],
                 "additionalProperties": False,
             },
         }
+    if name == "bands":
+        band = {"type": "object", "properties": {
+            "frequency": {"type": "number", "minimum": 20, "maximum": 20000},
+            "gain_db": {"type": "number", "minimum": -24, "maximum": 24},
+            "q": {"type": "number", "minimum": .1, "maximum": 20},
+        }, "required": ["frequency", "gain_db", "q"], "additionalProperties": False}
+        return {"type": "array", "items": band, "minItems": 1, "maxItems": 16}
+    if name == "mask":
+        return {"type": "object", "properties": {
+            "resource": {"type": "string"}, "softness": {"type": "number", "minimum": 0, "maximum": 1},
+            "invert": {"type": "boolean"},
+        }, "required": ["resource", "softness", "invert"], "additionalProperties": False}
     if name == "properties":
         properties = {key: {"anyOf": [{"type": "number"}, {"type": "null"}]} for spec in FILTERS.values() for key in spec.properties}
         return {"type": "object", "properties": properties, "required": sorted(properties), "additionalProperties": False}
@@ -148,7 +164,7 @@ class EditPlanner:
             "'source'. All timing is integer project frames under the supplied CFR policy. Preserve rational "
             "rates. Map every request to supported operations or list it in unsupported; never approximate an "
             "unsupported request. Supported operations are: " + ", ".join(sorted(OP_TYPES - {"mask"})) + ". "
-            "The mask operation is unavailable in the standalone local boundary because it requires an external resource. "
+            "The standalone mask operation is unavailable unless a job-local resource exists; color_grade may use a supplied job-local mask. "
             "Do not use track_id on transition/overlay, pan or gain_db on audio_mix, edge on chroma_key, or mode on mask."
             " For brightness filters, properties.level is a fractional adjustment: 0 is unchanged, positive values brighten ("
             "for example 0.35 means 35% brighter), and negative values darken. "
@@ -161,7 +177,10 @@ class EditPlanner:
             "with negative offsets to position the enlarged image: -25%/-25%:150%x150% is a centered 1.5x zoom, "
             "and -10%/-10%:120%x120% is a gentler centered 1.2x zoom. Dimensions below 100% shrink the picture. "
             "Geometry transform intervals on the same clip must not overlap. For audio fade endpoints use amplitudes from 0 to 1. "
-            "List pitch shifting as unsupported. Include unsupported requests and assumptions in decision_log."
+            "Use color_grade for animated tint/brightness/contrast/saturation, parametric_eq for bounded EQ bands, and reverb for added ambience. "
+            "Dereverb must reference a preflighted immutable derived audio asset and the pinned deepfilternet3-local model; never substitute denoising. "
+            "Silence removal uses analyzed interval evidence with defaults -50 dB, 0.5 seconds, and 0.12 seconds speech padding. "
+            "List pitch shifting as unsupported. Include detected intervals and effect choices in decision_log."
         )
 
     @staticmethod
@@ -200,6 +219,9 @@ class EditPlanner:
             if path:
                 observation["evidence_id"] = path
                 evidence.add(path)
+        audio_evidence = facts.get("audio_evidence")
+        if isinstance(audio_evidence, dict) and isinstance(audio_evidence.get("evidence_id"), str):
+            evidence.add(audio_evidence["evidence_id"])
         base_input = json.dumps({"instruction": instruction, "original_instruction": original_instruction,
                                  "previous_plan": previous_plan, "analysis": facts}, ensure_ascii=False)
         attempts: list[dict[str, Any]] = []
@@ -251,7 +273,22 @@ class EditPlanner:
                 raise VideoEditingError("planner output omitted a summary", code="model_invalid_response")
             log = draft.get("decision_log", {"observations": [], "decisions": [], "unsupported": unsupported,
                                             "assumptions": ["The planner supplied no additional public rationale."]})
-            log = validate_decisions(log, evidence)
+            try:
+                log = validate_decisions(log, evidence)
+            except VideoEditingError as exc:
+                attempt_record["decision_log_validation"] = {
+                    "status": "failed",
+                    "issues": [{"code": exc.code, "message": str(exc)}],
+                }
+                if attempt_index >= self.max_repair_attempts:
+                    raise
+                repair_text = json.dumps({
+                    "task": "Repair this edit-plan draft using only the validation issues. Return the complete corrected draft.",
+                    "draft": draft,
+                    "context": json.loads(base_input),
+                    "issues": [{"code": exc.code, "message": str(exc)}],
+                }, ensure_ascii=False)
+                continue
             log["unsupported"] = list(dict.fromkeys(log["unsupported"] + unsupported))
             return PlanResult(validated, summary, tuple(attempts), log)
         raise AssertionError("bounded planning loop did not terminate")

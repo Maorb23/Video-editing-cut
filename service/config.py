@@ -20,6 +20,10 @@ class Settings:
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024
     worker_lease_seconds: int = 300
     worker_max_attempts: int = 3
+    # The bundled UI is served over plain HTTP in the documented local setup.
+    # Deployments behind HTTPS should opt in with the environment variable.
+    session_cookie_secure: bool = False
+    django_secret_key: str = "video-editing-local-development-only"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -40,6 +44,8 @@ class Settings:
             max_upload_bytes=int(os.environ.get("VIDEO_EDIT_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024))),
             worker_lease_seconds=int(os.environ.get("VIDEO_EDIT_WORKER_LEASE_SECONDS", "300")),
             worker_max_attempts=int(os.environ.get("VIDEO_EDIT_WORKER_MAX_ATTEMPTS", "3")),
+            session_cookie_secure=os.environ.get("VIDEO_EDIT_SESSION_COOKIE_SECURE", "false").lower() not in {"0", "false", "no"},
+            django_secret_key=os.environ.get("VIDEO_EDIT_DJANGO_SECRET_KEY", "video-editing-local-development-only"),
         )
 
     def validate(self) -> None:

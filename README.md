@@ -101,12 +101,20 @@ export VIDEO_EDIT_MELT="$(command -v melt)"
 export VIDEO_EDIT_MAX_UPLOAD_BYTES=$((2 * 1024 * 1024 * 1024))
 export VIDEO_EDIT_WORKER_LEASE_SECONDS=300
 export VIDEO_EDIT_WORKER_MAX_ATTEMPTS=3
+# Local HTTP keeps this false. Set it to true in HTTPS deployments.
+export VIDEO_EDIT_SESSION_COOKIE_SECURE=false
+# Required in deployed environments; keep it stable so sessions remain valid.
+export VIDEO_EDIT_DJANGO_SECRET_KEY='replace-with-a-long-random-secret'
 mkdir -p "$VIDEO_EDIT_STORAGE_ROOT" "$VIDEO_EDIT_WORK_ROOT"
 video-edit-migrate
 video-edit-api
 # In a second process:
 video-edit-worker
 ```
+
+`video-edit-migrate` applies both the service SQL migrations and Django's
+account/session migrations. Authentication uses Django's user model, password
+hashing, and database session store while preserving the `/v1/auth/*` API.
 
 For the local Docker PostgreSQL example below, use
 `postgresql://postgres:postgres@127.0.0.1:5432/video_editing`. If migration
@@ -193,10 +201,10 @@ remains in the `postgres_data` Docker volume.
 
 When the Phase 1 API is running, open `http://127.0.0.1:8000/` for the
 minimal product workflow. The page uses only the documented `/v1` endpoints:
-it uploads a video, submits an instruction, and shows the compiled plan with
-an automatically rendered preview. Users can review public observations,
-decisions, confidence, assumptions and unsupported requests, select previous
-iterations, request changes, or approve a selected iteration for final rendering.
+it uploads a video, submits an instruction, and shows the compiled plan before
+any video is rendered. Users can review public observations, decisions,
+confidence, assumptions and unsupported requests, select previous iterations,
+request changes, or approve a selected iteration for rendering and inspection.
 Refreshing the browser recovers the edit. Prior final exports remain downloadable.
 
 The page also records funnel events and structured outcome feedback locally in
@@ -227,8 +235,8 @@ are emitted as structured JSON logs with job/edit IDs, stage, attempt, elapsed
 time, and stable failure code.
 
 The current trusted single-worker tier intentionally retains PostgreSQL queue
-claiming and concurrency one. Redis, autoscaling, MCP, billing, and multi-tenant
-authentication remain deferred until workload or user evidence justifies them.
+claiming and concurrency one. Redis, autoscaling, MCP, billing, and organization-
+level tenancy remain deferred until workload or user evidence justifies them.
 This tier's configured safeguards are:
 
 - three worker attempts by default (`VIDEO_EDIT_WORKER_MAX_ATTEMPTS`, bounded
@@ -269,15 +277,15 @@ iteration 1; the UI formats that as `001`.
   instructions, timestamps, artifact locations and errors.
 - `GET /v1/edits/{edit_id}/iterations/{iteration}/plan` returns a specific
   version, including separate plan, preview and final-render statuses.
-- The corresponding `/preview`, `/poster` and `/inspection` endpoints become
-  available after preview rendering and automated inspection. Video downloads
-  support byte ranges. A completed final render is available at `/video`.
+- Legacy `/preview`, `/poster` and `/inspection` artifacts remain readable for
+  existing iterations. New iterations do not render video before approval.
+  Video downloads support byte ranges. A completed render is available at `/video`.
 - Approval still accepts a `plan_id`; it binds that exact iteration. The UI's
   **Approve and render** action calls `/approve` followed by `/render`.
 
-Worker jobs are `plan`, `revision`, `compilation`, `preview`, `inspection` and
-`render`, with queued/running/succeeded/failed lifecycle records in the edit
-response. A preview failure leaves its compiled plan reviewable. Revision is
+Worker jobs retain support for `plan`, `revision`, `compilation`, `preview`,
+`inspection` and `render`, with queued/running/succeeded/failed lifecycle records
+in the edit response. New work queues rendering only after approval. Revision is
 allowed after planning and outside final rendering; it uses the original
 uploaded source and the latest validated plan as context. Unsupported requests
 are listed explicitly, and approval applies only the supported operations.

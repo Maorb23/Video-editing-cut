@@ -123,6 +123,25 @@ class PlanningTests(unittest.TestCase):
                 )
             self.assertEqual(len(model.calls), 2)
 
+    def test_invalid_decision_log_is_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            asset = root / "source.mp4"
+            asset.write_bytes(b"video")
+            analysis = self.analysis(root, asset)
+            analysis.data["observations"] = [{"path": "analysis/frames/sample-001.jpg"}]
+            invalid = draft()
+            invalid["decision_log"] = {
+                "observations": [{"type": "visual", "description": "Subject", "evidence": ["sample-001.jpg"], "confidence": 0.9}],
+                "decisions": [], "unsupported": [], "assumptions": [],
+            }
+            model = FakeModel([invalid, draft()])
+            result = EditPlanner(model, max_repair_attempts=1).plan(
+                "Keep it", analysis, plan_path=root / "edit-plan.json", source_relative="source.mp4",
+            )
+            self.assertEqual(len(result.attempts), 2)
+            self.assertIn("decision log references unknown evidence", model.calls[1]["input_text"])
+
     def test_unsupported_instruction_stops_before_render(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

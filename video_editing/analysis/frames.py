@@ -12,6 +12,7 @@ from ..probe import probe_one
 from ..supervisor import ProcessSupervisor, Toolchain
 from ..timebase import seconds_to_frames
 from ..workspace import JobWorkspace
+from ..silence import parse_silence_output
 from .base import AnalysisArtifact
 
 
@@ -168,5 +169,17 @@ class FrameAnalysisProvider:
             "proxy": proxy.relative_to(workspace.root).as_posix(),
             "observations": observations,
         }
+        if media.get("audio") is not None:
+            detected = supervisor.run([
+                str(toolchain.ffmpeg), "-hide_banner", "-nostdin", "-i", str(source), "-vn",
+                "-af", "silencedetect=noise=-50dB:d=0.5", "-f", "null", "-",
+            ])
+            if detected.returncode:
+                raise ExternalToolError("silence analysis failed", code="analysis_failed")
+            silence = parse_silence_output(detected.stderr, source=source, frame_rate=frame_rate,
+                                           threshold_db=-50.0, minimum_seconds=0.5)
+            silence_path = workspace.write_json("analysis/silence.json", silence)
+            data["audio_evidence"] = {"silence": silence,
+                                      "evidence_id": silence_path.relative_to(workspace.root).as_posix()}
         path = workspace.write_json("analysis/analysis.json", data)
         return AnalysisArtifact(data, path, extracted)

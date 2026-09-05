@@ -24,6 +24,21 @@ class CreateEditRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=20_000)
 
 
+class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=1024)
+
+
+class LoginRequest(RegisterRequest):
+    pass
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+
+
 class ReviseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     instruction: str = Field(min_length=1, max_length=20_000)

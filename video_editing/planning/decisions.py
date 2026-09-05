@@ -13,7 +13,7 @@ def decision_schema() -> dict[str, Any]:
     def record(properties):
         return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
 
-    return record({
+    schema = record({
         "observations": {"type": "array", "maxItems": 64, "items": record({
             "type": {"type": "string", "enum": ["visual", "audio", "metadata"]},
             "description": text, "evidence": {"type": "array", "items": text, "maxItems": 24}, "confidence": confidence,
@@ -24,13 +24,24 @@ def decision_schema() -> dict[str, Any]:
         "unsupported": {"type": "array", "items": text, "maxItems": 32},
         "assumptions": {"type": "array", "items": text, "maxItems": 32},
     })
+    schema["properties"]["measurements"] = {"type": "array", "maxItems": 256, "items": record({
+        "type": {"type": "string", "enum": ["silence_interval", "eq_gain", "reverb_tail", "dereverb"]},
+        "operation_id": text, "value": text, "unit": text,
+        "evidence": {"type": "array", "items": text, "maxItems": 24},
+    })}
+    schema["required"].append("measurements")
+    return schema
 
 
 def validate_decisions(value: Any, evidence: set[str]) -> dict[str, Any]:
+    original = value
+    if isinstance(value, dict) and "measurements" not in value:
+        value = {**value, "measurements": []}
     def check(item, schema):
         kind = schema["type"]
         if kind == "object":
-            valid = isinstance(item, dict) and set(item) == set(schema["properties"])
+            valid = (isinstance(item, dict) and set(schema.get("required", ())) <= set(item)
+                     and set(item) <= set(schema["properties"]))
             if valid:
                 for key, child in item.items():
                     check(child, schema["properties"][key])
@@ -49,4 +60,7 @@ def validate_decisions(value: Any, evidence: set[str]) -> dict[str, Any]:
     for observation in value["observations"]:
         if not set(observation["evidence"]) <= evidence:
             raise VideoEditingError("decision log references unknown evidence", code="model_invalid_response")
-    return value
+    for measurement in value.get("measurements", []):
+        if not set(measurement["evidence"]) <= evidence:
+            raise VideoEditingError("decision log references unknown evidence", code="model_invalid_response")
+    return original

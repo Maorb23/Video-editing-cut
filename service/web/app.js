@@ -14,7 +14,7 @@
     failed: ["This edit could not be completed.", 100],
   };
   const el = (id) => document.getElementById(id);
-  const panels = ["start-panel", "job-panel", "plan-panel", "render-panel", "result-panel", "failure-panel", "feedback-panel"];
+  const panels = ["auth-panel", "profile-panel", "start-panel", "job-panel", "plan-panel", "render-panel", "result-panel", "failure-panel", "feedback-panel"];
   let editId = null;
   let activePlan = null;
   let timer = null;
@@ -22,6 +22,7 @@
   let latestEdit = null;
   let refreshSequence = 0;
   let followLatest = true;
+  let currentUser = null;
 
   function record(event, details = {}) {
     const events = JSON.parse(localStorage.getItem(TELEMETRY_KEY) || "[]");
@@ -30,12 +31,22 @@
   }
   function saveSession() { localStorage.setItem(STORAGE_KEY, JSON.stringify({ editId })); }
   function show(...ids) { panels.forEach((id) => el(id).classList.toggle("hidden", !ids.includes(id))); }
-  function errorText(error) { return error?.error?.message || "The request could not be completed. Please try again."; }
+  function errorText(error) { return error?.error?.message || error?.detail || "The request could not be completed. Please try again."; }
+  function authErrorText(error) { return error?.status === 404 ? "Authentication is not available on the running server. Restart the API and try again." : errorText(error); }
   function showCreateError(message) { el("create-error").textContent = message; el("create-error").classList.remove("hidden"); }
+  function showAuthError(id, message) { el(id).textContent = message; el(id).classList.remove("hidden"); }
+  function signedIn(user) {
+    currentUser = user;
+    el("user-email").textContent = user.email;
+    el("profile-email").textContent = user.email;
+    el("profile-id").textContent = user.id;
+    ["user-email", "open-profile", "logout", "export-feedback"].forEach((id) => el(id).classList.remove("hidden"));
+    show("start-panel");
+  }
   async function request(path, options = {}) {
     const response = await fetch(path, options);
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw body;
+    if (!response.ok) throw { ...body, status: response.status };
     return body;
   }
   function stopPolling() { if (timer) window.clearTimeout(timer); timer = null; }
@@ -57,22 +68,61 @@
       warnings.append(list); warnings.classList.remove("hidden");
     } else warnings.classList.add("hidden");
     const log = plan.decision_log || {};
-    function items(id, values, describe) {
+    function empty(container) {
+      const message = document.createElement("p");
+      message.className = "empty-state";
+      message.textContent = "None reported.";
+      container.append(message);
+    }
+    function confidenceBadge(value) {
+      if (!Number.isFinite(value)) return null;
+      const badge = document.createElement("span");
+      badge.className = "confidence";
+      badge.textContent = `${Math.round(value * 100)}% confidence`;
+      return badge;
+    }
+    function renderObservations(values) {
+      const container = el("observations"); container.replaceChildren();
+      if (!values?.length) { empty(container); return; }
+      values.forEach((observation) => {
+        const item = document.createElement("article"); item.className = "rationale-item";
+        const description = document.createElement("p"); description.textContent = observation.description; item.append(description);
+        const metadata = document.createElement("div"); metadata.className = "rationale-meta";
+        const badge = confidenceBadge(observation.confidence); if (badge) metadata.append(badge);
+        (observation.evidence || []).forEach((value) => { const evidence = document.createElement("code"); evidence.textContent = value; metadata.append(evidence); });
+        item.append(metadata); container.append(item);
+      });
+    }
+    function renderDecisions(values) {
+      const container = el("decisions"); container.replaceChildren();
+      if (!values?.length) { empty(container); return; }
+      values.forEach((decision) => {
+        const item = document.createElement("article"); item.className = "rationale-item";
+        const heading = document.createElement("strong"); heading.textContent = decision.request; item.append(heading);
+        const reason = document.createElement("p"); reason.textContent = decision.reason; item.append(reason);
+        const metadata = document.createElement("div"); metadata.className = "rationale-meta";
+        const operation = document.createElement("span"); operation.className = "operation"; operation.textContent = decision.operation; metadata.append(operation);
+        const badge = confidenceBadge(decision.confidence); if (badge) metadata.append(badge);
+        item.append(metadata); container.append(item);
+      });
+    }
+    function renderSimple(id, values) {
       const container = el(id); container.replaceChildren();
-      if (!values?.length) { container.textContent = "None reported."; return; }
+      if (!values?.length) { empty(container); return; }
       const list = document.createElement("ul");
-      values.forEach((value) => { const item = document.createElement("li"); item.textContent = describe(value); list.append(item); });
+      values.forEach((value) => { const item = document.createElement("li"); item.textContent = value; list.append(item); });
       container.append(list);
     }
-    const confidence = (value) => Number.isFinite(value) ? ` (${Math.round(value * 100)}% confidence)` : "";
-    items("observations", log.observations, (o) => `${o.description}${confidence(o.confidence)}${o.evidence?.length ? ` Evidence: ${o.evidence.join(", ")}` : ""}`);
-    items("decisions", log.decisions, (d) => `${d.request}: ${d.operation}. ${d.reason}${confidence(d.confidence)}`);
-    items("unsupported", log.unsupported, (v) => v);
-    items("assumptions", log.assumptions, (v) => v);
-    el("iteration-status").textContent = `Iteration ${String(plan.iteration).padStart(3, "0")} · Plan: ${plan.plan_status} · Preview: ${plan.preview_status}${plan.error ? ` · ${plan.error.message}` : ""}`;
+    renderObservations(log.observations);
+    renderDecisions(log.decisions);
+    renderSimple("unsupported", log.unsupported);
+    renderSimple("assumptions", log.assumptions);
+    const planState = plan.plan_status === "awaiting_approval" ? "Ready for review" : plan.plan_status === "approved" ? "Approved" : plan.plan_status;
+    el("iteration-status").textContent = `Iteration ${String(plan.iteration).padStart(3, "0")} · ${planState}${plan.error ? ` · ${plan.error.message}` : ""}`;
     const preview = el("preview-video");
-    preview.classList.toggle("hidden", !plan.preview_url);
-    if (plan.preview_url && preview.getAttribute("src") !== plan.preview_url) {
+    const showLegacyPreview = Boolean(plan.preview_url && plan.plan_status !== "awaiting_approval");
+    preview.classList.toggle("hidden", !showLegacyPreview);
+    if (showLegacyPreview && preview.getAttribute("src") !== plan.preview_url) {
       preview.pause();
       preview.src = plan.preview_url;
       preview.load();
@@ -83,11 +133,11 @@
       preview.load();
     }
     if (plan.poster_url) preview.poster = plan.poster_url; else preview.removeAttribute("poster");
-    el("inspection-link").classList.toggle("hidden", !plan.inspection_url);
+    el("inspection-link").classList.toggle("hidden", !showLegacyPreview || !plan.inspection_url);
     if (plan.inspection_url) el("inspection-link").href = plan.inspection_url;
     el("iteration-download").classList.toggle("hidden", !plan.video_url);
     if (plan.video_url) el("iteration-download").href = plan.video_url;
-    el("approve-plan").disabled = plan.preview_status !== "succeeded" || !["awaiting_approval", "approved"].includes(plan.plan_status) || ["planning", "analyzing", "rendering"].includes(latestEdit?.state);
+    el("approve-plan").disabled = plan.plan_status !== "awaiting_approval" || ["planning", "analyzing", "rendering"].includes(latestEdit?.state);
     el("request-changes").disabled = !["awaiting_approval", "approved", "completed", "failed"].includes(latestEdit?.state);
   }
 
@@ -194,6 +244,32 @@
     const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
     const link = document.createElement("a"); link.href = url; link.download = "video-editor-feedback.json"; link.click(); URL.revokeObjectURL(url);
   });
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-  if (saved?.editId) { editId = saved.editId; show("job-panel"); refresh(); }
+  el("open-profile").addEventListener("click", () => {
+    if (!currentUser) return;
+    stopPolling();
+    show("profile-panel");
+  });
+  el("close-profile").addEventListener("click", () => {
+    if (editId) refresh(); else show("start-panel");
+  });
+  async function authenticate(path, email, password, errorId, buttonId) {
+    const error = el(errorId);
+    const button = el(buttonId);
+    error.classList.add("hidden");
+    button.disabled = true;
+    button.textContent = path.endsWith("register") ? "Creating account…" : "Signing in…";
+    try {
+      const user = await request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+      signedIn(user);
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (saved?.editId) { editId = saved.editId; show("job-panel"); refresh(); }
+    } finally {
+      button.disabled = false;
+      button.textContent = path.endsWith("register") ? "Create account" : "Sign in";
+    }
+  }
+  el("login-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await authenticate("/v1/auth/login", el("login-email").value, el("login-password").value, "login-error", "login-submit"); } catch (error) { showAuthError("login-error", authErrorText(error)); } });
+  el("register-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await authenticate("/v1/auth/register", el("register-email").value, el("register-password").value, "register-error", "register-submit"); } catch (error) { showAuthError("register-error", authErrorText(error)); } });
+  el("logout").addEventListener("click", async () => { await fetch("/v1/auth/logout", { method: "POST" }); stopPolling(); localStorage.removeItem(STORAGE_KEY); editId = null; currentUser = null; ["user-email", "open-profile", "logout", "export-feedback"].forEach((id) => el(id).classList.add("hidden")); show("auth-panel"); });
+  request("/v1/auth/me").then(signedIn).then(() => { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); if (saved?.editId) { editId = saved.editId; show("job-panel"); refresh(); } }).catch(() => show("auth-panel"));
 })();

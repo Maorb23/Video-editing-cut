@@ -59,11 +59,9 @@ def test_state_transitions_approval_gate_and_single_claim(repository):
     compilation = repository.claim("compiler", 300)
     repository.complete_compilation(compilation)
     assert repository.get_edit(edit["id"])["state"] == "awaiting_approval"
+    assert repository.claim("previewer", 300) is None
     repository.approve(edit["id"], plan_id)
     repository.queue_render(edit["id"])
-    preview = repository.claim("previewer", 300)
-    assert preview.kind == "preview"
-    repository.fail(preview, {"code": "fixture_preview_skipped"})
     render = repository.claim("worker-b", 300)
     assert render and render.kind == "render"
     assert repository.get_edit(edit["id"])["state"] == "rendering"
@@ -133,8 +131,6 @@ def test_complete_upload_plan_approve_render_result(repository, monkeypatch):
         assert worker.run_once()
         compile_job = repository.claim("fixture-compiler", 300)
         repository.complete_compilation(compile_job)
-        preview_job = repository.claim("fixture-preview", 300)
-        repository.fail(preview_job, {"code": "fixture_preview_skipped"})
         plan = client.get(f"/v1/edits/{edit['id']}/plan").json()
         assert client.post(f"/v1/edits/{edit['id']}/approve", json={"plan_id": plan["plan_id"]}).status_code == 200
         assert client.post(f"/v1/edits/{edit['id']}/render").status_code == 202

@@ -15,6 +15,10 @@ pins its XML `version` and records catalog ID `mlt-7.28-shotcut-24.06`.
 | chroma key | `frei0r.bluescreen0r` |
 | mask | `shape` |
 | speed | reserved `timewarp`; structural duration must already be resolved |
+| animated color | allow-listed `avfilter.colorbalance` properties and optional mask |
+| parametric EQ | `avfilter.equalizer` with bounded typed bands |
+| added reverb | `avfilter.aecho` with bounded room/mix parameters |
+| dereverb | immutable derived audio producer; no MLT noise-reduction substitute |
 
 Curated filters: `brightness`, `contrast`, `saturation`, `blur`, `sharpen`,
 `grayscale`, `sepia`, and `white_balance`. The Python registry is authoritative

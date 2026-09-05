@@ -28,44 +28,67 @@ class FakeRepository:
         self.edit = None
         self.plan = None
         self.artifacts = []
+        self.users = {}
+        self.sessions = {}
+
+    def register(self, *, email, password):
+        if email in self.users:
+            raise ConflictError("an account with that email already exists")
+        user = {"id": "usr_" + str(len(self.users) + 1) * 32, "email": email}
+        self.users[email] = user
+        return user
+
+    def create_session(self, *, email, password):
+        if email not in self.users:
+            raise NotFoundError("invalid email or password")
+        token = f"token-{email}"
+        self.sessions[token] = self.users[email]
+        return self.users[email], token
+
+    def get_session_user(self, token):
+        if token not in self.sessions:
+            raise NotFoundError("session not found")
+        return self.sessions[token]
+
+    def delete_session(self, token): self.sessions.pop(token, None)
 
     def create_video(self, **values):
         self.video = {"id": values["video_id"], "state": "uploaded", "filename": values["filename"], **values}
         return self.video
 
-    def create_edit(self, *, video_id, instruction):
-        if not self.video or video_id != self.video["id"]:
+    def create_edit(self, *, video_id, instruction, user_id=None):
+        if not self.video or video_id != self.video["id"] or (user_id and self.video.get("user_id") != user_id):
             raise NotFoundError("video not found")
-        self.edit = {"id": "edt_" + "2" * 32, "state": "analyzing", "created_at": datetime.now(timezone.utc), "progress": {"stage": "queued"}}
+        self.edit = {"id": "edt_" + "2" * 32, "state": "analyzing", "created_at": datetime.now(timezone.utc), "progress": {"stage": "queued"}, "user_id": user_id}
         return self.edit
 
-    def get_edit(self, edit_id):
-        if not self.edit or edit_id != self.edit["id"]:
+    def get_edit(self, edit_id, user_id=None):
+        if not self.edit or edit_id != self.edit["id"] or (user_id and self.edit.get("user_id") != user_id):
             raise NotFoundError("edit not found")
         return self.edit
 
-    def get_plan(self, edit_id):
+    def get_plan(self, edit_id, iteration=None, user_id=None):
         if not self.plan:
             raise NotFoundError("plan not available")
         return self.plan
 
-    def approve(self, edit_id, plan_id):
+    def approve(self, edit_id, plan_id, user_id=None):
         if not self.plan or plan_id != self.plan["id"]:
             raise NotFoundError("plan not found")
         self.edit["state"] = "approved"
         return self.edit
 
-    def queue_render(self, edit_id):
+    def queue_render(self, edit_id, user_id=None):
         if self.edit["state"] != "approved":
             raise ConflictError("approval required")
         return self.edit
 
-    def get_result(self, edit_id):
+    def get_result(self, edit_id, user_id=None):
         if self.edit["state"] != "completed":
             raise ConflictError("validated result is not available")
         return self.edit, self.artifacts
 
-    def get_artifact(self, edit_id, kind):
+    def get_artifact(self, edit_id, kind, iteration=None, user_id=None):
         return next(item for item in self.artifacts if item["kind"] == kind)
 
 
@@ -73,11 +96,13 @@ class ApiContractTests(IsolatedAsyncioTestCase):
     async def test_api_contract_and_approval_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024)
+            settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024, session_cookie_secure=False)
             repo = FakeRepository()
             storage = FilesystemStorage(settings.storage_root)
-            transport = httpx.ASGITransport(app=create_app(settings, repo, storage, blocking_runner=run_inline))
+            transport = httpx.ASGITransport(app=create_app(settings, repo, storage, blocking_runner=run_inline, authentication=repo))
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                authenticated = await client.post("/v1/auth/register", json={"email": "test@example.com", "password": "password123"})
+                self.assertEqual(authenticated.status_code, 201)
                 uploaded = await client.post("/v1/videos", files={"file": ("clip.mp4", b"media", "video/mp4")})
                 self.assertEqual(uploaded.status_code, 201)
                 video_id = uploaded.json()["id"]

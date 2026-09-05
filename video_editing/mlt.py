@@ -172,6 +172,29 @@ def _add_filter(producer: ET.Element, operation: dict[str, Any], profile: dict[s
         _property(node, "resource", operation["resource"])
         _property(node, "mix", operation.get("softness", 0))
         _property(node, "invert", int(bool(operation.get("invert", False))))
+    elif kind == "color_grade":
+        _property(node, "mlt_service", "avfilter.colorbalance")
+        _property(node, "shotcut:filter", "colorGrade")
+        keyframes = operation.get("keyframes", [])
+        names = {"brightness": "av.brightness", "contrast": "av.contrast", "saturation": "av.saturation", "tint": "av.tint"}
+        for field, mlt_name in names.items():
+            animated = [item for item in keyframes if field in item]
+            if animated:
+                _property(node, mlt_name, ";".join(f"{item['frame']}={item[field]}" for item in animated))
+            elif field in operation:
+                _property(node, mlt_name, operation[field])
+        if operation.get("mask"):
+            mask = operation["mask"]
+            _property(node, "av.mask", mask["resource"])
+            _property(node, "av.mask_softness", mask.get("softness", 0))
+            _property(node, "av.mask_invert", int(bool(mask.get("invert", False))))
+    elif kind == "parametric_eq":
+        _property(node, "mlt_service", "avfilter.equalizer")
+        _property(node, "av.bands", ";".join(f"f={b['frequency']}:g={b['gain_db']}:q={b['q']}" for b in operation["bands"]))
+    elif kind == "reverb":
+        _property(node, "mlt_service", "avfilter.aecho")
+        for name, default in (("room_size", .5), ("damping", .5), ("wet", .3), ("dry", 1.0), ("pre_delay_ms", 20)):
+            _property(node, f"av.{name}", operation.get(name, default))
 
 
 def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | None = None) -> ET.ElementTree:
@@ -187,11 +210,14 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
     clip_track_indexes = {clip["id"]: index + 1 for index, track in enumerate(tracks) for clip in track["clips"]}
     effects_by_target: dict[str, list[dict[str, Any]]] = {}
     speed_by_target: dict[str, dict[str, Any]] = {}
+    dereverb_by_target: dict[str, dict[str, Any]] = {}
     for operation in plan.get("operations", []):
-        if operation.get("enabled", True) and operation["type"] in {"transform", "volume", "fade_audio", "chroma_key", "mask", "filter"}:
+        if operation.get("enabled", True) and operation["type"] in {"transform", "volume", "fade_audio", "chroma_key", "mask", "filter", "color_grade", "parametric_eq", "reverb"}:
             effects_by_target.setdefault(operation["target"], []).append(operation)
         if operation.get("enabled", True) and operation["type"] == "speed":
             speed_by_target[operation["target"]] = operation
+        if operation.get("enabled", True) and operation["type"] == "dereverb":
+            dereverb_by_target[operation["target"]] = operation
 
     timeline_frames = max((
         clip["timeline_start"] + clip["duration"]
@@ -232,13 +258,15 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
             if clip["timeline_start"] > cursor:
                 ET.SubElement(playlist, "blank", {"length": _time(clip["timeline_start"] - cursor, profile)})
             asset = assets[clip["asset_id"]]
+            dereverb = dereverb_by_target.get(clip["id"])
+            media_asset = assets[dereverb["derived_asset_id"]] if dereverb else asset
             producer_id = f"ves_producer_{track_index}_{clip_index}_{clip['id']}"
             producer = ET.SubElement(root, "producer", {
                 "id": producer_id,
                 "in": _time(0, profile),
                 "out": _time(asset["duration_frames"] - 1, profile),
             })
-            asset_path = (base_dir / asset["path"]).resolve()
+            asset_path = (base_dir / media_asset["path"]).resolve()
             resource = _resource_path(asset_path, output)
             speed = speed_by_target.get(clip["id"])
             if speed:
@@ -248,7 +276,7 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
                 _property(producer, "warp_resource", resource)
             else:
                 _property(producer, "resource", resource)
-                _property(producer, "mlt_service", "qimage" if asset["kind"] == "image" else "avformat-novalidate")
+                _property(producer, "mlt_service", "qimage" if media_asset["kind"] == "image" else "avformat-novalidate")
             _property(producer, "length", _time(asset["duration_frames"], profile))
             _property(producer, "shotcut:caption", clip["id"])
             _property(producer, "video-editing-skill:asset-id", asset["id"])

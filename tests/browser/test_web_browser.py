@@ -31,7 +31,8 @@ class WebBrowserTests(TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         root = Path(self.temporary_directory.name)
         settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024)
-        application = create_app(settings, FakeRepository(), FilesystemStorage(settings.storage_root), blocking_runner=run_inline)
+        repository = FakeRepository()
+        application = create_app(settings, repository, FilesystemStorage(settings.storage_root), blocking_runner=run_inline, authentication=repository)
         self.socket = socket.socket()
         self.socket.bind(("127.0.0.1", 0))
         self.socket.listen(5)
@@ -74,12 +75,12 @@ class WebBrowserTests(TestCase):
             const json = (body, status = 200) => new Response(JSON.stringify(body), {{
               status, headers: {{'Content-Type': 'application/json'}}
             }});
+            if (url === '/v1/auth/me') return json({{'id': 'usr_{'0' * 32}', 'email': 'editor@example.com'}});
             if (url === '/v1/videos') return json({{'id': 'vid_{'1' * 32}', 'state': 'uploaded', 'filename': 'clip.mp4'}}, {upload_status});
             if (url === '/v1/edits' && options.method === 'POST') return json({{'id': editId, 'state': 'analyzing', 'created_at': '2026-09-04T00:00:00Z'}});
-            if (url.endsWith('/iterations')) return json({{iterations: Array.from({{length: iteration}}, (_, i) => ({{iteration: i + 1, plan_id: planId, preview_status: 'succeeded'}}))}});
+            if (url.endsWith('/iterations')) return json({{iterations: Array.from({{length: iteration}}, (_, i) => ({{iteration: i + 1, plan_id: planId, preview_status: 'queued'}}))}});
             if (url.endsWith('/plan')) return json({{
-              edit_id: editId, plan_id: planId, iteration: Number(url.split('/').at(-2)), plan_status: 'awaiting_approval', preview_status: 'succeeded', status: 'proposed', summary: 'Short highlight', warnings: ['Caption position needs review'], edit_plan: {{version: '1.0'}},
-              preview_url: 'https://example.test/preview.mp4', poster_url: 'https://example.test/poster.png',
+              edit_id: editId, plan_id: planId, iteration: Number(url.split('/').at(-2)), plan_status: 'awaiting_approval', preview_status: 'queued', status: 'proposed', summary: 'Short highlight', warnings: ['Caption position needs review'], edit_plan: {{version: '1.0'}},
               decision_log: {{observations: [{{description: 'Subject on the right', confidence: 0.82, evidence: ['frame-580.png']}}], decisions: [{{request: 'focus', operation: 'transform', reason: 'Subject visible', confidence: 0.78}}], unsupported: ['Pitch shifting'], assumptions: ['Sampled evidence is sufficient']}}
             }});
             if (url.endsWith('/revise')) {{ iteration++; state = 'awaiting_approval'; return json({{id: editId, iteration, state}}); }}
@@ -108,10 +109,10 @@ class WebBrowserTests(TestCase):
         self.page.click("#approve-plan")
         sync_api.expect(self.page.locator("#status-message")).to_contain_text("Rendering")
 
-    def test_revisions_history_preview_and_public_decisions(self) -> None:
+    def test_revisions_history_and_public_decisions_before_render(self) -> None:
         self.install_api()
         self.create_edit()
-        sync_api.expect(self.page.locator("#preview-video")).to_be_visible()
+        sync_api.expect(self.page.locator("#preview-video")).to_be_hidden()
         sync_api.expect(self.page.locator("#observations")).to_contain_text("82% confidence")
         sync_api.expect(self.page.locator("#unsupported")).to_contain_text("Pitch shifting")
         self.page.fill("#revision-instruction", "Reduce zoom")
@@ -137,6 +138,9 @@ class WebBrowserTests(TestCase):
         self.assertTrue(any(event["event"] == "feedback" and event["outcome"] == "wrong_result" for event in events))
         self.assertEqual(self.page.locator("label[for='video-file']").inner_text(), "Video file")
         self.assertEqual(self.page.locator("#create-edit-heading").evaluate("element => element.tagName"), "H1")
+        self.page.click("#open-profile")
+        sync_api.expect(self.page.locator("#profile-panel")).to_be_visible()
+        sync_api.expect(self.page.locator("#profile-email")).to_have_text("editor@example.com")
 
     def test_upload_limit_and_failed_job_are_presented(self) -> None:
         self.install_api(upload_status=413)

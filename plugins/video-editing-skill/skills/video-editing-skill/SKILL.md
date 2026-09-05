@@ -106,6 +106,11 @@ and after each edit boundary and transform keyframe. Keyframe inspection claims
 must cite the corresponding frame-exact entries in `keyframe_coverage` and the
 persisted frame files; never infer coverage from playback or timestamp-based
 seeking. Read the waveform plus silence, peak, volume, and loudness evidence.
+For silence removal, persist detected intervals and settings before deriving
+frame-exact linked A/V segments. For EQ/reverb/dereverb, inspect the structured
+audio measurements and effect decisions. Dereverb requires the pinned optional
+`deepfilternet==0.5.6` local runtime during preflight and an immutable derived
+audio asset; stop when unavailable and never substitute noise reduction.
 Complete every pending review record with a concrete observation, status,
 severity, source action, and planned change.
 

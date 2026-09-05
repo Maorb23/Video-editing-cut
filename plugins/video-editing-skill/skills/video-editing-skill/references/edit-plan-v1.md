@@ -33,12 +33,27 @@ order. Supported types are:
 - `transition`, `caption`, `overlay`, `transform`
 - `volume`, `fade_audio`, `audio_mix`
 - `speed`, `chroma_key`, `mask`, `filter`
+- `color_grade`, `parametric_eq`, `reverb`, `dereverb`
 
 `transform.keyframes` contain strictly increasing integer `frame` values,
 relative to the transform operation start, and geometry or opacity. Transform
 interpolation is linear in V1; other interpolation values fail validation.
 `filter.name` and its properties must exist in the curated registry. Unknown
 fields fail validation.
+
+`color_grade` supports `tint`, `brightness`, `contrast`, and `saturation`, plus
+strictly increasing keyframes for those values. Interpolation is linear. Its
+optional mask contains only a job-relative `resource`, `softness`, and `invert`.
+
+`parametric_eq.bands` contains 1–16 exact `{frequency, gain_db, q}` records.
+`reverb` allow-lists room size, damping, wet/dry mix, and pre-delay. `dereverb`
+references an immutable derived audio asset, the exact `deepfilternet3-local`
+model name, and a SHA-256 model fingerprint; it never means noise reduction.
+
+Silence evidence records FFmpeg settings, rational project rate, and rounded
+frame intervals. Defaults are −50 dB, 0.5 seconds minimum, 0.12 seconds speech
+padding, and short 0.04-second audio fades at joins. Linked audio/video segments
+must retain identical source and timeline ranges.
 
 Export V1 is MP4, `libx264`, and AAC. Optional deterministic settings include
 video/audio bitrate, pixel format, and movflags; the standalone runner applies

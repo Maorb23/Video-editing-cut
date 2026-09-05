@@ -4,7 +4,6 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,59 +67,57 @@ class PostgresRepository:
                 connection.execute(migration.read_text(encoding="utf-8"))
                 connection.execute("INSERT INTO schema_migrations(name) VALUES (%s)", (migration.name,))
 
-    def create_video(self, *, filename: str, content_type: str | None, storage_key: str, size: int, sha256: str, video_id: str | None = None) -> dict[str, Any]:
+    def create_video(self, *, filename: str, content_type: str | None, storage_key: str, size: int, sha256: str, video_id: str | None = None, user_id: str | None = None) -> dict[str, Any]:
         video_id = video_id or new_id("vid")
         with self._connect() as connection:
             return connection.execute(
-                "INSERT INTO videos(id,state,filename,content_type,storage_key,size_bytes,sha256) VALUES (%s,'uploaded',%s,%s,%s,%s,%s) RETURNING *",
-                (video_id, filename, content_type, storage_key, size, sha256),
+                "INSERT INTO videos(id,state,filename,content_type,storage_key,size_bytes,sha256,user_id) VALUES (%s,'uploaded',%s,%s,%s,%s,%s,%s) RETURNING *",
+                (video_id, filename, content_type, storage_key, size, sha256, user_id),
             ).fetchone()
 
-    def create_edit(self, *, video_id: str, instruction: str) -> dict[str, Any]:
+    def create_edit(self, *, video_id: str, instruction: str, user_id: str | None = None) -> dict[str, Any]:
         edit_id, job_id = new_id("edt"), new_id("job")
         with self._connect() as connection:
-            if not connection.execute("SELECT 1 FROM videos WHERE id=%s AND state='uploaded'", (video_id,)).fetchone():
+            if not connection.execute("SELECT 1 FROM videos WHERE id=%s AND state='uploaded' AND (%s::text IS NULL OR user_id=%s)", (video_id, user_id, user_id)).fetchone():
                 raise NotFoundError("video not found")
             edit = connection.execute(
-                "INSERT INTO edits(id,video_id,instruction,state,progress) VALUES (%s,%s,%s,'analyzing',%s) RETURNING *",
-                (edit_id, video_id, instruction, json.dumps({"stage": "queued"})),
+                "INSERT INTO edits(id,video_id,instruction,state,progress,user_id) VALUES (%s,%s,%s,'analyzing',%s,%s) RETURNING *",
+                (edit_id, video_id, instruction, json.dumps({"stage": "queued"}), user_id),
             ).fetchone()
-            connection.execute("INSERT INTO iterations(edit_id,iteration,instruction) VALUES (%s,1,%s)", (edit_id, instruction))
+            connection.execute("INSERT INTO iterations(edit_id,iteration,instruction,user_id) VALUES (%s,1,%s,%s)", (edit_id, instruction, user_id))
             connection.execute("INSERT INTO jobs(id,edit_id,kind,status) VALUES (%s,%s,'plan','queued')", (job_id, edit_id))
             return edit
 
-    def get_edit(self, edit_id: str) -> dict[str, Any]:
+    def get_edit(self, edit_id: str, user_id: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
-            row = connection.execute("SELECT e.*,i.preview_status,i.render_status FROM edits e JOIN iterations i ON i.edit_id=e.id AND i.iteration=e.current_iteration WHERE e.id=%s", (edit_id,)).fetchone()
+            row = connection.execute("SELECT e.*,i.preview_status,i.render_status FROM edits e JOIN iterations i ON i.edit_id=e.id AND i.iteration=e.current_iteration WHERE e.id=%s AND (%s::text IS NULL OR e.user_id=%s)", (edit_id, user_id, user_id)).fetchone()
             if row:
                 row["jobs"] = connection.execute("SELECT id,iteration,kind,status,progress,attempts,last_error,created_at,started_at,finished_at FROM jobs WHERE edit_id=%s ORDER BY created_at,id", (edit_id,)).fetchall()
         if not row:
             raise NotFoundError("edit not found")
         return row
 
-    def get_plan(self, edit_id: str, iteration: int | None = None) -> dict[str, Any]:
+    def get_plan(self, edit_id: str, iteration: int | None = None, user_id: str | None = None) -> dict[str, Any]:
         with self._connect() as connection:
-            row = connection.execute("SELECT p.*,i.parent_iteration,i.instruction,i.preview_status,i.render_status,i.status AS plan_status,i.failure FROM plans p JOIN iterations i USING(edit_id,iteration) JOIN edits e ON e.id=p.edit_id WHERE p.edit_id=%s AND p.iteration=COALESCE(%s,e.current_iteration)", (edit_id, iteration)).fetchone()
+            row = connection.execute("SELECT p.*,i.parent_iteration,i.instruction,i.preview_status,i.render_status,i.status AS plan_status,i.failure FROM plans p JOIN iterations i USING(edit_id,iteration) JOIN edits e ON e.id=p.edit_id WHERE p.edit_id=%s AND p.iteration=COALESCE(%s,e.current_iteration) AND (%s::text IS NULL OR e.user_id=%s)", (edit_id, iteration, user_id, user_id)).fetchone()
         if not row:
             raise NotFoundError("plan not available")
         return row
 
-    def approve(self, edit_id: str, plan_id: str) -> dict[str, Any]:
+    def approve(self, edit_id: str, plan_id: str, user_id: str | None = None) -> dict[str, Any]:
         approval_id = new_id("apr")
         with self._connect() as connection:
-            edit = connection.execute("SELECT * FROM edits WHERE id=%s FOR UPDATE", (edit_id,)).fetchone()
+            edit = connection.execute("SELECT * FROM edits WHERE id=%s AND (%s::text IS NULL OR user_id=%s) FOR UPDATE", (edit_id, user_id, user_id)).fetchone()
             plan = connection.execute("SELECT p.*,i.status AS iteration_status,i.preview_status FROM plans p JOIN iterations i USING(edit_id,iteration) WHERE p.id=%s AND p.edit_id=%s", (plan_id, edit_id)).fetchone()
             if not edit or not plan:
                 raise NotFoundError("edit or plan not found")
             if edit["state"] in {"analyzing", "planning", "rendering"} or plan["iteration_status"] not in {"awaiting_approval", "approved", "completed"}:
                 raise ConflictError("a compiled, reviewable iteration is required")
-            if plan["preview_status"] != "succeeded":
-                raise ConflictError("preview inspection must succeed before approval")
             if canonical_digest(plan["document"]) != plan["sha256"]:
                 raise ConflictError("stored plan digest does not match its document")
             connection.execute(
-                "INSERT INTO approvals(id,edit_id,plan_id,plan_sha256) VALUES (%s,%s,%s,%s) ON CONFLICT(plan_id) DO NOTHING",
-                (approval_id, edit_id, plan_id, plan["sha256"]),
+                "INSERT INTO approvals(id,edit_id,plan_id,plan_sha256,user_id) VALUES (%s,%s,%s,%s,%s) ON CONFLICT(plan_id) DO NOTHING",
+                (approval_id, edit_id, plan_id, plan["sha256"], user_id),
             )
             connection.execute("UPDATE plans SET status='approved' WHERE id=%s", (plan_id,))
             connection.execute("UPDATE iterations SET status=CASE WHEN status='completed' THEN status ELSE 'approved' END,updated_at=now() WHERE edit_id=%s AND iteration=%s", (edit_id, plan["iteration"]))
@@ -129,10 +126,10 @@ class PostgresRepository:
                 (plan["iteration"], json.dumps({"stage": "approved", "iteration": plan["iteration"]}), edit_id),
             ).fetchone()
 
-    def queue_render(self, edit_id: str) -> dict[str, Any]:
+    def queue_render(self, edit_id: str, user_id: str | None = None) -> dict[str, Any]:
         job_id = new_id("job")
         with self._connect() as connection:
-            edit = connection.execute("SELECT * FROM edits WHERE id=%s FOR UPDATE", (edit_id,)).fetchone()
+            edit = connection.execute("SELECT * FROM edits WHERE id=%s AND (%s::text IS NULL OR user_id=%s) FOR UPDATE", (edit_id, user_id, user_id)).fetchone()
             if not edit:
                 raise NotFoundError("edit not found")
             if edit["state"] != "approved":
@@ -237,8 +234,8 @@ class PostgresRepository:
             if not locked or locked["state"] != "planning":
                 raise ConflictError("planning job no longer owns the edit state")
             connection.execute(
-                "INSERT INTO plans(id,edit_id,iteration,status,summary,warnings,document,sha256,workspace_key,decision_log) VALUES (%s,%s,%s,'proposed',%s,%s,%s,%s,%s,%s)",
-                (plan_id, job.edit_id, job.iteration, summary, json.dumps(warnings), json.dumps(document), digest, workspace_key, json.dumps(decision_log or {"observations": [], "decisions": [], "unsupported": [], "assumptions": []})),
+                "INSERT INTO plans(id,edit_id,iteration,status,summary,warnings,document,sha256,workspace_key,decision_log,user_id) SELECT %s,%s,%s,'proposed',%s,%s,%s,%s,%s,%s,user_id FROM edits WHERE id=%s",
+                (plan_id, job.edit_id, job.iteration, summary, json.dumps(warnings), json.dumps(document), digest, workspace_key, json.dumps(decision_log or {"observations": [], "decisions": [], "unsupported": [], "assumptions": []}), job.edit_id),
             )
             self._finish(connection, job)
             connection.execute("UPDATE iterations SET artifact_paths=%s,updated_at=now() WHERE edit_id=%s AND iteration=%s", (json.dumps({"workspace": workspace_key, "plan": f"{workspace_key}/edit-plan.json", "decisions": f"{workspace_key}/decisions.json"}), job.edit_id, job.iteration))
@@ -255,8 +252,8 @@ class PostgresRepository:
             for artifact in artifacts:
                 artifact_id = new_id("art")
                 accepted = not preview and artifact["kind"] == accepted_kind
-                c.execute("INSERT INTO artifacts(id,edit_id,iteration,kind,storage_key,size_bytes,sha256,metadata,accepted) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                          (artifact_id, job.edit_id, job.iteration, artifact["kind"], artifact["storage_key"], artifact["size"], artifact["sha256"], json.dumps(artifact.get("metadata", {})), accepted))
+                c.execute("INSERT INTO artifacts(id,edit_id,iteration,kind,storage_key,size_bytes,sha256,metadata,accepted,user_id) SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,user_id FROM edits WHERE id=%s",
+                          (artifact_id, job.edit_id, job.iteration, artifact["kind"], artifact["storage_key"], artifact["size"], artifact["sha256"], json.dumps(artifact.get("metadata", {})), accepted, job.edit_id))
                 paths[f"storage_{artifact['kind']}"] = artifact["storage_key"]
                 if accepted:
                     if accepted_id is not None:
@@ -265,7 +262,7 @@ class PostgresRepository:
             if not preview and accepted_id is None:
                 raise ConflictError("render produced no accepted output")
             if not preview:
-                c.execute("INSERT INTO results(id,edit_id,iteration,accepted_artifact_id,metadata) VALUES (%s,%s,%s,%s,%s)", (new_id("res"), job.edit_id, job.iteration, accepted_id, json.dumps({"artifact_count": len(artifacts)})))
+                c.execute("INSERT INTO results(id,edit_id,iteration,accepted_artifact_id,metadata,user_id) SELECT %s,%s,%s,%s,%s,user_id FROM edits WHERE id=%s", (new_id("res"), job.edit_id, job.iteration, accepted_id, json.dumps({"artifact_count": len(artifacts)}), job.edit_id))
                 c.execute("UPDATE iterations SET status='completed',render_status='succeeded' WHERE edit_id=%s AND iteration=%s", (job.edit_id, job.iteration))
                 c.execute("UPDATE edits SET state='completed',accepted_artifact_id=%s,active_iteration=%s,progress=%s,updated_at=now() WHERE id=%s AND approved_iteration=%s", (accepted_id, job.iteration, json.dumps({"stage": "completed", "iteration": job.iteration}), job.edit_id, job.iteration))
             else:
@@ -285,9 +282,9 @@ class PostgresRepository:
                 connection.execute("UPDATE job_attempts SET status='failed',error=%s,finished_at=now() WHERE job_id=%s AND attempt=%s", (json.dumps(error), job.id, job.attempts))
                 self._failure(connection, job.edit_id, job.iteration, job.kind, error)
 
-    def get_result(self, edit_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def get_result(self, edit_id: str, user_id: str | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         with self._connect() as connection:
-            edit = connection.execute("SELECT * FROM edits WHERE id=%s", (edit_id,)).fetchone()
+            edit = connection.execute("SELECT * FROM edits WHERE id=%s AND (%s::text IS NULL OR user_id=%s)", (edit_id, user_id, user_id)).fetchone()
             if not edit:
                 raise NotFoundError("edit not found")
             if not edit["accepted_artifact_id"]:
@@ -309,23 +306,23 @@ class PostgresRepository:
                 raise ConflictError("result does not have exactly one accepted output")
             return edit, list(artifacts)
 
-    def get_artifact(self, edit_id: str, kind: str, iteration: int | None = None) -> dict[str, Any]:
+    def get_artifact(self, edit_id: str, kind: str, iteration: int | None = None, user_id: str | None = None) -> dict[str, Any]:
         if iteration is not None:
             with self._connect() as connection:
-                row = connection.execute("SELECT * FROM artifacts WHERE edit_id=%s AND iteration=%s AND kind=%s", (edit_id, iteration, kind)).fetchone()
+                row = connection.execute("SELECT a.* FROM artifacts a JOIN edits e ON e.id=a.edit_id WHERE a.edit_id=%s AND a.iteration=%s AND a.kind=%s AND (%s::text IS NULL OR e.user_id=%s)", (edit_id, iteration, kind, user_id, user_id)).fetchone()
             if not row:
                 raise NotFoundError("artifact not available")
             return row
-        edit, artifacts = self.get_result(edit_id)
+        edit, artifacts = self.get_result(edit_id, user_id)
         del edit
         row = next((item for item in artifacts if item["kind"] == kind), None)
         if not row:
             raise NotFoundError("artifact not found")
         return row
 
-    def revise(self, edit_id: str, instruction: str) -> dict[str, Any]:
+    def revise(self, edit_id: str, instruction: str, user_id: str | None = None) -> dict[str, Any]:
         with self._connect() as c:
-            edit = c.execute("SELECT * FROM edits WHERE id=%s FOR UPDATE", (edit_id,)).fetchone()
+            edit = c.execute("SELECT * FROM edits WHERE id=%s AND (%s::text IS NULL OR user_id=%s) FOR UPDATE", (edit_id, user_id, user_id)).fetchone()
             if not edit:
                 raise NotFoundError("edit not found")
             if edit["state"] not in {"awaiting_approval", "approved", "completed", "failed"}:
@@ -334,13 +331,13 @@ class PostgresRepository:
             if not parent:
                 raise ConflictError("revision requires a previous validated plan")
             number = edit["current_iteration"] + 1
-            c.execute("INSERT INTO iterations(edit_id,iteration,parent_iteration,instruction) VALUES (%s,%s,%s,%s)", (edit_id, number, parent["iteration"], instruction))
+            c.execute("INSERT INTO iterations(edit_id,iteration,parent_iteration,instruction,user_id) VALUES (%s,%s,%s,%s,%s)", (edit_id, number, parent["iteration"], instruction, edit["user_id"]))
             self._queue(c, edit_id, number, "revision")
             return c.execute("UPDATE edits SET current_iteration=%s,approved_iteration=NULL,state='planning',failure=NULL,progress=%s,updated_at=now() WHERE id=%s RETURNING *", (number, json.dumps({"stage": "revision", "status": "queued", "iteration": number}), edit_id)).fetchone()
 
-    def get_iterations(self, edit_id: str) -> list[dict[str, Any]]:
+    def get_iterations(self, edit_id: str, user_id: str | None = None) -> list[dict[str, Any]]:
         with self._connect() as c:
-            if not c.execute("SELECT 1 FROM edits WHERE id=%s", (edit_id,)).fetchone():
+            if not c.execute("SELECT 1 FROM edits WHERE id=%s AND (%s::text IS NULL OR user_id=%s)", (edit_id, user_id, user_id)).fetchone():
                 raise NotFoundError("edit not found")
             return c.execute("SELECT i.*,p.id AS plan_id FROM iterations i LEFT JOIN plans p USING(edit_id,iteration) WHERE i.edit_id=%s ORDER BY iteration", (edit_id,)).fetchall()
 
@@ -377,7 +374,7 @@ class PostgresRepository:
         if kind in {"preview", "inspection"}:
             c.execute("UPDATE iterations SET preview_status='failed',failure=%s,updated_at=now() WHERE edit_id=%s AND iteration=%s", (payload, edit_id, iteration))
         else:
-            c.execute("UPDATE iterations SET status='failed',failure=%s,render_status=CASE WHEN %s='render' THEN 'failed' ELSE render_status END,preview_status=CASE WHEN %s<>'render' THEN 'failed' ELSE preview_status END,updated_at=now() WHERE edit_id=%s AND iteration=%s", (payload, kind, kind, edit_id, iteration))
+            c.execute("UPDATE iterations SET status='failed',failure=%s,render_status=CASE WHEN %s='render' THEN 'failed' ELSE render_status END,updated_at=now() WHERE edit_id=%s AND iteration=%s", (payload, kind, edit_id, iteration))
             c.execute("UPDATE edits SET state='failed',failure=%s,progress=%s,updated_at=now() WHERE id=%s AND (current_iteration=%s OR (approved_iteration=%s AND %s='render'))", (payload, json.dumps({"stage": kind, "status": "failed"}), edit_id, iteration, iteration, kind))
 
     def complete_compilation(self, job: ClaimedJob) -> None:
@@ -386,7 +383,6 @@ class PostgresRepository:
             c.execute("UPDATE iterations SET status='awaiting_approval',artifact_paths=artifact_paths || jsonb_build_object('mlt',(artifact_paths->>'workspace') || '/project.mlt'),updated_at=now() WHERE edit_id=%s AND iteration=%s", (job.edit_id, job.iteration))
             c.execute("UPDATE edits SET state='awaiting_approval',progress=%s,updated_at=now() WHERE id=%s AND current_iteration=%s", (json.dumps({"stage": "awaiting_approval", "iteration": job.iteration}), job.edit_id, job.iteration))
             self._finish(c, job)
-            self._queue(c, job.edit_id, job.iteration, "preview")
 
     def complete_preview_render(self, job: ClaimedJob) -> None:
         with self._connect() as c:
