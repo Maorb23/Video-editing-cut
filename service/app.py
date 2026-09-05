@@ -59,8 +59,16 @@ def create_app(
     async def security(request: Request, call_next: Callable[..., Awaitable[Response]]) -> Response:
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
-            if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
-                return JSONResponse(status_code=403, content={"error": {"code": "csrf_rejected", "message": "cross-site request rejected", "retryable": False}})
+            if origin:
+                forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",", 1)[0].strip()
+                forwarded_host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc)).split(",", 1)[0].strip()
+                allowed_origins = {
+                    str(request.base_url).rstrip("/"),
+                    f"{forwarded_proto}://{forwarded_host}".rstrip("/"),
+                    selected.public_base_url.rstrip("/"),
+                }
+                if origin.rstrip("/") not in allowed_origins:
+                    return JSONResponse(status_code=403, content={"error": {"code": "csrf_rejected", "message": "cross-site request rejected", "retryable": False}})
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
