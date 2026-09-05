@@ -283,6 +283,11 @@ the worker as its own Railway service using `Containerfile.worker` (or an
 equivalent worker start command), sharing the same database, object storage,
 and required environment variables.
 
+`railway.toml` pins the API build command to install the optional service and
+Redis dependencies. If a Railway service has an explicit build command, set it
+to `pip install -e '.[service,redis]'` (or remove the override so the checked-in
+configuration is used); otherwise `uvicorn` will not be available at runtime.
+
 Run the deterministic suite with `python -m unittest discover -v`. The pinned
 render lane is intentionally explicit so CI cannot silently substitute tools:
 
