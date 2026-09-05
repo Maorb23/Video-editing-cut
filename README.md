@@ -284,9 +284,12 @@ equivalent worker start command), sharing the same database, object storage,
 and required environment variables.
 
 `railway.toml` pins the API build command to install the optional service and
-Redis dependencies. If a Railway service has an explicit build command, set it
-to `pip install -e '.[service,redis]'` (or remove the override so the checked-in
-configuration is used); otherwise `uvicorn` will not be available at runtime.
+Redis dependencies and runs `video-edit-migrate` as a pre-deploy command. If a
+Railway service has explicit dashboard overrides, set the build command to
+`pip install -e '.[service,redis]'` and the pre-deploy command to
+`video-edit-migrate` (or remove the overrides so the checked-in configuration
+is used); otherwise `uvicorn` may be unavailable or the SaaS tables may not
+exist at runtime.
 
 Run the deterministic suite with `python -m unittest discover -v`. The pinned
 render lane is intentionally explicit so CI cannot silently substitute tools:
