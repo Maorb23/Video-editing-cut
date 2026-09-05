@@ -28,15 +28,45 @@ class RegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=1024)
+    captcha_token: str | None = Field(default=None, max_length=4096)
 
 
-class LoginRequest(RegisterRequest):
-    pass
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=1024)
 
 
 class UserResponse(BaseModel):
     id: str
     email: str
+    email_verified: bool = False
+    avatar_key: str = "camera"
+
+
+class EmailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    email: str = Field(min_length=3, max_length=320)
+
+
+class TokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    token: str = Field(min_length=1, max_length=4096)
+
+
+class PasswordResetRequest(TokenRequest):
+    password: str = Field(min_length=8, max_length=1024)
+
+
+class AvatarRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    avatar_key: str = Field(pattern=r"^(camera|director|clapperboard|film-reel|video-frame|timeline|lens|play)$")
+
+
+class TopUpRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    package_key: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
+    simulate: str = Field(default="success", pattern=r"^(success|failure)$")
 
 
 class ReviseRequest(BaseModel):

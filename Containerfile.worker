@@ -8,6 +8,7 @@ WORKDIR /app
 COPY pyproject.toml README.md /app/
 COPY video_editing /app/video_editing
 COPY service /app/service
+COPY melvid_icon.png /app/melvid_icon.png
 RUN chmod +x /app/service/worker-entrypoint.sh
 RUN pip install --no-cache-dir '.[service]'
 RUN mkdir -p /var/lib/video-editing/jobs /var/lib/video-editing/objects \

@@ -75,6 +75,75 @@ class PostgresRepository:
                 (video_id, filename, content_type, storage_key, size, sha256, user_id),
             ).fetchone()
 
+    def ensure_profile(self, user_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "INSERT INTO user_profiles(user_id) VALUES (%s) ON CONFLICT(user_id) DO UPDATE SET user_id=excluded.user_id RETURNING *",
+                (user_id,),
+            ).fetchone()
+            exists = connection.execute("SELECT 1 FROM credit_ledger_entries WHERE user_id=%s", (user_id,)).fetchone()
+            if not exists:
+                connection.execute(
+                    "INSERT INTO credit_ledger_entries(id,user_id,amount,reason,idempotency_key,metadata) VALUES (%s,%s,200,'promotion','welcome',%s)",
+                    (new_id("crd"), user_id, json.dumps({"campaign": "welcome"})),
+                )
+            return row
+
+    def get_profile(self, user_id: str) -> dict[str, Any]:
+        self.ensure_profile(user_id)
+        with self._connect() as connection:
+            return connection.execute("SELECT * FROM user_profiles WHERE user_id=%s", (user_id,)).fetchone()
+
+    def set_avatar(self, user_id: str, avatar_key: str) -> dict[str, Any]:
+        self.ensure_profile(user_id)
+        with self._connect() as connection:
+            return connection.execute("UPDATE user_profiles SET avatar_key=%s,updated_at=now() WHERE user_id=%s RETURNING *", (avatar_key, user_id)).fetchone()
+
+    def verify_email(self, user_id: str) -> dict[str, Any]:
+        self.ensure_profile(user_id)
+        with self._connect() as connection:
+            return connection.execute("UPDATE user_profiles SET email_verified_at=COALESCE(email_verified_at,now()),updated_at=now() WHERE user_id=%s RETURNING *", (user_id,)).fetchone()
+
+    def credit_summary(self, user_id: str) -> dict[str, Any]:
+        self.ensure_profile(user_id)
+        with self._connect() as connection:
+            entries = connection.execute("SELECT id,amount,reason,edit_id,payment_reference,metadata,created_at FROM credit_ledger_entries WHERE user_id=%s ORDER BY created_at DESC,id DESC LIMIT 100", (user_id,)).fetchall()
+            balance = connection.execute("SELECT COALESCE(sum(amount),0)::integer AS balance FROM credit_ledger_entries WHERE user_id=%s", (user_id,)).fetchone()["balance"]
+        return {"balance": balance, "entries": entries}
+
+    def create_mock_top_up(self, user_id: str, package: dict[str, Any], succeed: bool) -> dict[str, Any]:
+        order_id = new_id("ord")
+        status = "succeeded" if succeed else "failed"
+        with self._connect() as connection:
+            order = connection.execute(
+                "INSERT INTO top_up_orders(id,user_id,package_key,credits,price_minor,currency,status,failure_code,completed_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,now()) RETURNING *",
+                (order_id, user_id, package["key"], package["credits"], package["price_minor"], package["currency"], status, None if succeed else "mock_declined"),
+            ).fetchone()
+            if succeed:
+                connection.execute(
+                    "INSERT INTO credit_ledger_entries(id,user_id,amount,reason,payment_reference,idempotency_key,metadata) VALUES (%s,%s,%s,'purchase',%s,%s,%s)",
+                    (new_id("crd"), user_id, package["credits"], order_id, f"mock-order:{order_id}", json.dumps({"package_key": package["key"], "provider": "mock"})),
+                )
+            return order
+
+    def list_projects(self, user_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT e.id,e.video_id,e.instruction,e.state,e.created_at,e.updated_at,e.current_iteration,
+                          e.active_iteration,e.approved_iteration,v.filename,
+                          COALESCE((SELECT sum(-amount) FROM credit_ledger_entries l WHERE l.edit_id=e.id AND l.amount<0),0)::integer AS credits_used
+                   FROM edits e JOIN videos v ON v.id=e.video_id WHERE e.user_id=%s
+                   ORDER BY e.updated_at DESC,e.id DESC""", (user_id,),
+            ).fetchall()
+            for row in rows:
+                row["iterations"] = connection.execute(
+                    """SELECT i.iteration,i.parent_iteration,i.instruction,i.status,i.preview_status,i.render_status,i.created_at,
+                              EXISTS(SELECT 1 FROM artifacts a WHERE a.edit_id=i.edit_id AND a.iteration=i.iteration AND a.kind='poster') AS has_poster,
+                              EXISTS(SELECT 1 FROM artifacts a WHERE a.edit_id=i.edit_id AND a.iteration=i.iteration AND a.kind='video') AS has_video
+                       FROM iterations i WHERE i.edit_id=%s ORDER BY i.iteration""", (row["id"],),
+                ).fetchall()
+        return rows
+
     def create_edit(self, *, video_id: str, instruction: str, user_id: str | None = None) -> dict[str, Any]:
         edit_id, job_id = new_id("edt"), new_id("job")
         with self._connect() as connection:
@@ -263,6 +332,12 @@ class PostgresRepository:
                 raise ConflictError("render produced no accepted output")
             if not preview:
                 c.execute("INSERT INTO results(id,edit_id,iteration,accepted_artifact_id,metadata,user_id) SELECT %s,%s,%s,%s,%s,user_id FROM edits WHERE id=%s", (new_id("res"), job.edit_id, job.iteration, accepted_id, json.dumps({"artifact_count": len(artifacts)}), job.edit_id))
+                c.execute(
+                    """INSERT INTO credit_ledger_entries(id,user_id,amount,reason,edit_id,idempotency_key,metadata)
+                       SELECT %s,user_id,-25,'generation',id,%s,%s FROM edits
+                       WHERE id=%s AND user_id IS NOT NULL ON CONFLICT(user_id,idempotency_key) DO NOTHING""",
+                    (new_id("crd"), f"generation:{job.edit_id}:{job.iteration}", json.dumps({"iteration": job.iteration}), job.edit_id),
+                )
                 c.execute("UPDATE iterations SET status='completed',render_status='succeeded' WHERE edit_id=%s AND iteration=%s", (job.edit_id, job.iteration))
                 c.execute("UPDATE edits SET state='completed',accepted_artifact_id=%s,active_iteration=%s,progress=%s,updated_at=now() WHERE id=%s AND approved_iteration=%s", (accepted_id, job.iteration, json.dumps({"stage": "completed", "iteration": job.iteration}), job.edit_id, job.iteration))
             else:

@@ -12,6 +12,10 @@ class AuthenticationBackend(Protocol):
     def create_session(self, *, email: str, password: str) -> tuple[dict[str, Any], str]: ...
     def get_session_user(self, token: str) -> dict[str, Any]: ...
     def delete_session(self, token: str) -> None: ...
+    def issue_token(self, user: dict[str, Any], purpose: str) -> str: ...
+    def read_token(self, token: str, purpose: str, max_age: int) -> dict[str, Any]: ...
+    def find_user(self, email: str) -> dict[str, Any] | None: ...
+    def reset_password(self, user_id: str, password: str) -> None: ...
 
 
 def _database_settings(database_url: str) -> dict[str, Any]:
@@ -121,6 +125,38 @@ class DjangoAuthentication:
         from django.contrib.sessions.backends.db import SessionStore
 
         SessionStore(session_key=token).delete(token)
+
+    def issue_token(self, user: dict[str, Any], purpose: str) -> str:
+        from django.core import signing
+        return signing.dumps({"id": user["id"], "email": user["email"]}, salt=f"melvid.{purpose}", compress=True)
+
+    def read_token(self, token: str, purpose: str, max_age: int) -> dict[str, Any]:
+        from django.core import signing
+        try:
+            value = signing.loads(token, salt=f"melvid.{purpose}", max_age=max_age)
+        except signing.SignatureExpired as exc:
+            raise ConflictError("link has expired") from exc
+        except signing.BadSignature as exc:
+            raise NotFoundError("link is invalid") from exc
+        if not isinstance(value, dict) or not value.get("id") or not value.get("email"):
+            raise NotFoundError("link is invalid")
+        return value
+
+    def find_user(self, email: str) -> dict[str, Any] | None:
+        from service.django_accounts.models import Account
+        try:
+            return self._public_user(Account.objects.get(email=email.strip().lower(), is_active=True))
+        except Account.DoesNotExist:
+            return None
+
+    def reset_password(self, user_id: str, password: str) -> None:
+        from service.django_accounts.models import Account
+        try:
+            user = Account.objects.get(pk=user_id, is_active=True)
+        except Account.DoesNotExist as exc:
+            raise NotFoundError("account not found") from exc
+        user.set_password(password)
+        user.save(update_fields=["password"])
 
 
 def migrate_django(database_url: str, secret_key: str | None = None) -> None:

@@ -30,6 +30,8 @@ class FakeRepository:
         self.artifacts = []
         self.users = {}
         self.sessions = {}
+        self.profiles = {}
+        self.ledger = {}
 
     def register(self, *, email, password):
         if email in self.users:
@@ -51,6 +53,28 @@ class FakeRepository:
         return self.sessions[token]
 
     def delete_session(self, token): self.sessions.pop(token, None)
+
+    def issue_token(self, user, purpose): return f"{purpose}:{user['id']}:{user['email']}"
+    def read_token(self, token, purpose, max_age):
+        prefix, user_id, email = token.split(":", 2)
+        if prefix != purpose: raise NotFoundError("link is invalid")
+        return {"id": user_id, "email": email}
+    def find_user(self, email): return self.users.get(email)
+    def reset_password(self, user_id, password): self.reset_user_id = user_id
+    def ensure_profile(self, user_id):
+        self.profiles.setdefault(user_id, {"user_id": user_id, "avatar_key": "camera", "email_verified_at": None})
+        self.ledger.setdefault(user_id, [{"id": "crd_welcome", "amount": 200, "reason": "promotion", "edit_id": None, "payment_reference": None, "metadata": {}, "created_at": datetime.now(timezone.utc)}])
+        return self.profiles[user_id]
+    def get_profile(self, user_id): return self.ensure_profile(user_id)
+    def set_avatar(self, user_id, avatar_key): self.ensure_profile(user_id)["avatar_key"] = avatar_key; return self.profiles[user_id]
+    def verify_email(self, user_id): self.ensure_profile(user_id)["email_verified_at"] = datetime.now(timezone.utc); return self.profiles[user_id]
+    def credit_summary(self, user_id):
+        self.ensure_profile(user_id); return {"balance": sum(x["amount"] for x in self.ledger[user_id]), "entries": self.ledger[user_id]}
+    def create_mock_top_up(self, user_id, package, succeed):
+        self.ensure_profile(user_id)
+        if succeed: self.ledger[user_id].append({"id": "crd_topup", "amount": package["credits"], "reason": "purchase", "edit_id": None, "payment_reference": "ord_mock", "metadata": {}, "created_at": datetime.now(timezone.utc)})
+        return {"id": "ord_mock", "package_key": package["key"], "status": "succeeded" if succeed else "failed"}
+    def list_projects(self, user_id): return [] if not self.edit or self.edit.get("user_id") != user_id else [{**self.edit, "filename": self.video["filename"], "instruction": "Keep the action", "updated_at": self.edit["created_at"], "current_iteration": 1, "active_iteration": None, "approved_iteration": None, "credits_used": 0, "iterations": []}]
 
     def create_video(self, **values):
         self.video = {"id": values["video_id"], "state": "uploaded", "filename": values["filename"], **values}

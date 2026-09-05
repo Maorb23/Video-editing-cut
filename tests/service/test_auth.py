@@ -36,6 +36,8 @@ class AuthenticationTests(IsolatedAsyncioTestCase):
                 self.assertEqual((await owner.get(f"/v1/edits/{edit_id}")).status_code, 200)
                 self.assertEqual((await other.post("/v1/auth/register", json={"email": "other@example.com", "password": "password123"})).status_code, 201)
                 self.assertEqual((await other.get(f"/v1/edits/{edit_id}")).status_code, 404)
+                self.assertEqual((await other.get("/v1/projects")).json()["projects"], [])
+                self.assertEqual(len((await owner.get("/v1/projects")).json()["projects"]), 1)
                 self.assertEqual((await owner.post("/v1/auth/logout")).status_code, 204)
                 self.assertEqual((await owner.get("/v1/auth/me")).status_code, 401)
                 logged_in = await owner.post("/v1/auth/login", json={"email": "owner@example.com", "password": "password123"})
@@ -45,7 +47,7 @@ class AuthenticationTests(IsolatedAsyncioTestCase):
     async def test_secure_cookie_can_be_enabled_for_https_deployments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024, session_cookie_secure=True)
+            settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024, session_cookie_secure=True, django_secret_key="test-secret-key-not-for-production")
             repo = FakeRepository()
             transport = httpx.ASGITransport(app=create_app(settings, repo, FilesystemStorage(settings.storage_root), blocking_runner=run_inline, authentication=repo))
             async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as client:

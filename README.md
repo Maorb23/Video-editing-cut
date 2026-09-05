@@ -93,6 +93,13 @@ export VIDEO_EDIT_DATABASE_URL='postgresql://postgres:YOUR_PASSWORD@127.0.0.1:54
 export VIDEO_EDIT_STORAGE=filesystem
 export VIDEO_EDIT_STORAGE_ROOT="$PWD/service-data/objects"
 export VIDEO_EDIT_WORK_ROOT="$PWD/service-data/jobs"
+
+# Resend 
+export MELVID_EMAIL_PROVIDER=resend
+export MELVID_EMAIL_ENDPOINT=https://api.resend.com/emails
+export MELVID_EMAIL_API_KEY='re_your_actual_key'
+export MELVID_EMAIL_FROM='Melvid <no-reply@melvid.app>'
+export MELVID_PUBLIC_BASE_URL='http://127.0.0.1:8000'
 # Optional when these programs are on PATH; required when they are elsewhere.
 export VIDEO_EDIT_FFMPEG="$(command -v ffmpeg)"
 export VIDEO_EDIT_FFPROBE="$(command -v ffprobe)"
@@ -252,6 +259,29 @@ CPU/RAM/PID limits, quota-limited writable job/object mounts, and a network
 policy permitting only PostgreSQL and the configured object store. Container
 resource limits are deployment controls and must not be inferred from the
 image alone.
+
+## SaaS account deployment
+
+The web application includes Django-backed accounts and sessions, email
+verification/password-reset links, user-scoped project history, avatars, and
+an immutable credit ledger. Run `video-edit-migrate` before deploying the API.
+The top-up endpoint is deliberately mocked and never accepts card data. Prices
+come from the backend; a future payment provider must confirm an order on the
+server before adding an idempotent ledger event.
+
+Railway should retain the existing API, worker, and PostgreSQL services. Add a
+Redis service for shared signup/login rate limits in production. Configure
+Cloudflare Turnstile and a transactional email HTTP relay for public signup;
+without those variables local development uses an in-process limiter, skips
+CAPTCHA enforcement, and suppresses delivery. See `.env.example`. Production
+HTTPS deployments must set `VIDEO_EDIT_SESSION_COOKIE_SECURE=true` and a
+stable random `VIDEO_EDIT_DJANGO_SECRET_KEY`.
+
+The API service can be deployed directly from source with the repository
+`Procfile`; Railway supplies `$PORT` and the command binds to `0.0.0.0`. Keep
+the worker as its own Railway service using `Containerfile.worker` (or an
+equivalent worker start command), sharing the same database, object storage,
+and required environment variables.
 
 Run the deterministic suite with `python -m unittest discover -v`. The pinned
 render lane is intentionally explicit so CI cannot silently substitute tools:

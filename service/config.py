@@ -24,6 +24,14 @@ class Settings:
     # Deployments behind HTTPS should opt in with the environment variable.
     session_cookie_secure: bool = False
     django_secret_key: str = "video-editing-local-development-only"
+    public_base_url: str = "http://127.0.0.1:8000"
+    turnstile_secret_key: str | None = None
+    turnstile_site_key: str | None = None
+    redis_url: str | None = None
+    email_endpoint: str | None = None
+    email_api_key: str | None = None
+    email_from: str = "Melvid <no-reply@melvid.example>"
+    email_provider: str = "generic"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -46,6 +54,14 @@ class Settings:
             worker_max_attempts=int(os.environ.get("VIDEO_EDIT_WORKER_MAX_ATTEMPTS", "3")),
             session_cookie_secure=os.environ.get("VIDEO_EDIT_SESSION_COOKIE_SECURE", "false").lower() not in {"0", "false", "no"},
             django_secret_key=os.environ.get("VIDEO_EDIT_DJANGO_SECRET_KEY", "video-editing-local-development-only"),
+            public_base_url=os.environ.get("MELVID_PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
+            turnstile_secret_key=os.environ.get("MELVID_TURNSTILE_SECRET_KEY"),
+            turnstile_site_key=os.environ.get("MELVID_TURNSTILE_SITE_KEY"),
+            redis_url=os.environ.get("REDIS_URL"),
+            email_endpoint=os.environ.get("MELVID_EMAIL_ENDPOINT"),
+            email_api_key=os.environ.get("MELVID_EMAIL_API_KEY"),
+            email_from=os.environ.get("MELVID_EMAIL_FROM", "Melvid <no-reply@melvid.example>"),
+            email_provider=os.environ.get("MELVID_EMAIL_PROVIDER", "generic"),
         )
 
     def validate(self) -> None:
@@ -59,3 +75,5 @@ class Settings:
             raise ValueError("VIDEO_EDIT_WORKER_MAX_ATTEMPTS must be between 1 and 10")
         if self.storage_backend == "s3" and not self.s3_bucket:
             raise ValueError("VIDEO_EDIT_S3_BUCKET is required for S3 storage")
+        if self.session_cookie_secure and self.django_secret_key == "video-editing-local-development-only":
+            raise ValueError("VIDEO_EDIT_DJANGO_SECRET_KEY must be configured for secure deployments")
