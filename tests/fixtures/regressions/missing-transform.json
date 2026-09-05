@@ -1,0 +1,11 @@
+{
+  "incident": "missing-transform",
+  "operation": {
+    "id": "zoom",
+    "type": "transform",
+    "target": "c1",
+    "geometry": "-10%/-10%:120%x120%"
+  },
+  "expected_error": "compiled_effect_missing",
+  "invariant": "every validated transform has a corresponding affine geometry property"
+}

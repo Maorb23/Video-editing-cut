@@ -14,6 +14,9 @@ STRUCTURAL = {"trim", "split", "remove", "insert", "reorder"}
 def resolve_timeline(plan: dict[str, Any]) -> list[dict[str, Any]]:
     tracks = deepcopy(plan["tracks"])
 
+    def all_clip_ids() -> set[str]:
+        return {clip["id"] for track in tracks for clip in track["clips"]}
+
     def locate(clip_id: str) -> tuple[dict[str, Any], int, dict[str, Any]]:
         for track in tracks:
             for index, clip in enumerate(track["clips"]):
@@ -29,6 +32,8 @@ def resolve_timeline(plan: dict[str, Any]) -> list[dict[str, Any]]:
             target_track = next((t for t in tracks if t["id"] == operation["track_id"]), None)
             if target_track is None:
                 raise VideoEditingError(f"insert references unknown track: {operation['track_id']}", code="missing_target")
+            if operation["clip"]["id"] in all_clip_ids():
+                raise VideoEditingError(f"insert creates duplicate clip ID: {operation['clip']['id']}", code="duplicate_id")
             target_track["clips"].append(deepcopy(operation["clip"]))
             continue
         if kind == "reorder":
@@ -64,6 +69,8 @@ def resolve_timeline(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 raise VideoEditingError(f"split {operation['id']} must fall strictly inside its clip", code="invalid_range")
             right = deepcopy(clip)
             right["id"] = f"{clip['id']}__{operation['id']}"
+            if right["id"] in all_clip_ids():
+                raise VideoEditingError(f"split creates duplicate clip ID: {right['id']}", code="duplicate_id")
             right["timeline_start"] = at
             right["source_in"] += relative
             right["duration"] -= relative
@@ -72,4 +79,3 @@ def resolve_timeline(plan: dict[str, Any]) -> list[dict[str, Any]]:
     for track in tracks:
         track["clips"].sort(key=lambda clip: (clip["timeline_start"], clip["id"]))
     return tracks
-

@@ -17,9 +17,22 @@ def _identity(properties: dict[str, Any]) -> dict[str, str]:
     return {key: str(value).lower() if isinstance(value, bool) else str(value) for key, value in properties.items()}
 
 
+def _brightness(properties: dict[str, Any]) -> dict[str, str]:
+    """Map the plan's fractional brightness amount to MLT's multiplicative level.
+
+    MLT's ``brightness`` filter uses 1.0 as neutral (values below 1 darken).
+    Plans produced from natural language commonly express a positive amount
+    such as ``0.35`` as a 35% increase, so convert fractional amounts to the
+    corresponding MLT level while retaining already-native levels above 1.
+    """
+    value = properties["level"]
+    level = 1.0 + value if -1 <= value <= 1 else value
+    return {"level": str(level)}
+
+
 FILTER_CATALOG_VERSION = "mlt-7.28-shotcut-24.06"
 FILTERS: dict[str, FilterSpec] = {
-    "brightness": FilterSpec("brightness", {"level": (int, float)}, _identity),
+    "brightness": FilterSpec("brightness", {"level": (int, float)}, _brightness),
     "contrast": FilterSpec("frei0r.contrast0r", {"contrast": (int, float)}, _identity),
     "saturation": FilterSpec("frei0r.saturat0r", {"saturation": (int, float)}, _identity),
     "blur": FilterSpec("frei0r.IIRblur", {"amount": (int, float)}, _identity),
@@ -43,4 +56,3 @@ OPERATION_SERVICES: dict[str, str] = {
     "mask": "shape",
     "filter": "catalog",
 }
-

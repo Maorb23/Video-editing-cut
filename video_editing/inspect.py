@@ -168,7 +168,7 @@ def _transform_keyframes(plan: dict[str, Any], duration_frames: int) -> list[dic
 def _compare_frames(rendered: Path, source: Path, ffmpeg: str) -> float:
     result = run_checked([
         ffmpeg, "-v", "info", "-i", str(rendered), "-i", str(source),
-        "-lavfi", "ssim", "-f", "null", "-",
+        "-lavfi", "[1:v][0:v]scale2ref[reference][rendered];[rendered][reference]ssim", "-f", "null", "-",
     ])
     matches = SSIM_RE.findall(result.stderr)
     if not matches:
@@ -218,7 +218,15 @@ def check_inspection(record_path: Path) -> dict[str, Any]:
     return evaluation
 
 
-def inspect(video: Path, edit_plan: Path, output_dir: Path, *, ffmpeg: str | None = None, ffprobe: str | None = None) -> Path:
+def inspect(
+    video: Path,
+    edit_plan: Path,
+    output_dir: Path,
+    *,
+    ffmpeg: str | None = None,
+    ffprobe: str | None = None,
+    comparison_sources: dict[str, Path] | None = None,
+) -> Path:
     if not video.is_file():
         raise VideoEditingError(f"video not found: {video}", code="missing_file")
     ffmpeg_bin = ffmpeg or shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
@@ -283,7 +291,9 @@ def inspect(video: Path, edit_plan: Path, output_dir: Path, *, ffmpeg: str | Non
             automated_findings.append(finding)
             continue
         asset = assets.get(coverage["asset_id"])
-        source = (edit_plan.resolve().parent / str(asset.get("path"))).resolve() if asset else None
+        source = (comparison_sources or {}).get(str(coverage["asset_id"]))
+        if source is None and asset is not None:
+            source = (edit_plan.resolve().parent / str(asset.get("path"))).resolve()
         if source is None or not source.is_file():
             finding.update({"status": "fail", "code": "source_evidence_missing", "message": "source media is unavailable for conformance comparison"})
             automated_findings.append(finding)

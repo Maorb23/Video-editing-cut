@@ -1,0 +1,23 @@
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ffmpeg melt xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system videoedit && useradd --system --gid videoedit --home-dir /nonexistent videoedit
+WORKDIR /app
+COPY pyproject.toml README.md /app/
+COPY video_editing /app/video_editing
+COPY service /app/service
+RUN chmod +x /app/service/worker-entrypoint.sh
+RUN pip install --no-cache-dir '.[service]'
+RUN mkdir -p /var/lib/video-editing/jobs /var/lib/video-editing/objects \
+    && chown -R videoedit:videoedit /var/lib/video-editing
+
+ENV PYTHONUNBUFFERED=1 \
+    VIDEO_EDIT_STORAGE_ROOT=/var/lib/video-editing/objects \
+    VIDEO_EDIT_WORK_ROOT=/var/lib/video-editing/jobs \
+    VIDEO_EDIT_FFMPEG=/usr/bin/ffmpeg \
+    VIDEO_EDIT_FFPROBE=/usr/bin/ffprobe \
+    VIDEO_EDIT_MELT=/usr/bin/melt
+USER videoedit:videoedit
+ENTRYPOINT ["/app/service/worker-entrypoint.sh"]

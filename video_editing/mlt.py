@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from pathlib import Path
@@ -59,7 +60,7 @@ def _new_root(plan: dict[str, Any], output: Path) -> ET.Element:
     rate = profile["frame_rate"]
     root = ET.Element("mlt", {
         "LC_NUMERIC": "C", "version": "7.28.0", "title": output.stem,
-        "producer": "ves_main", "root": str(output.resolve().parent),
+        "producer": "ves_main",
     })
     ET.SubElement(root, "profile", {
         "description": "Video Editing Skill profile",
@@ -116,6 +117,8 @@ def _add_filter(producer: ET.Element, operation: dict[str, Any], profile: dict[s
     if kind == "filter":
         spec = FILTERS[operation["name"]]
         _property(node, "mlt_service", spec.service)
+        if operation["name"] == "brightness":
+            _property(node, "shotcut:filter", "brightness")
         for name, value in spec.transform(operation.get("properties", {})).items():
             _property(node, name, value)
     elif kind == "transform":
@@ -135,7 +138,9 @@ def _add_filter(producer: ET.Element, operation: dict[str, Any], profile: dict[s
                     code="unsupported_transform_property",
                 )
         _transform_property(node, "mlt_service", "affine")
-        _transform_property(node, "transition.rotate_x", operation.get("rotation", 0))
+        _transform_property(node, "shotcut:filter", "affineSizePosition")
+        _transform_property(node, "transition.fix_rotate_x", operation.get("rotation", 0))
+        _transform_property(node, "transition.threads", 0)
         geometry_keys = [item for item in keyframes if "geometry" in item]
         opacity_keys = [item for item in keyframes if "opacity" in item]
         if geometry_keys:
@@ -153,7 +158,11 @@ def _add_filter(producer: ET.Element, operation: dict[str, Any], profile: dict[s
         _property(node, "mlt_service", "volume")
         from_value = operation.get("from", 0 if operation.get("direction") == "in" else 1)
         to_value = operation.get("to", 1 if operation.get("direction") == "in" else 0)
-        _property(node, "level", f"0={from_value};{operation['duration'] - 1}={to_value}")
+        # Plan endpoints are linear amplitudes; MLT's animated level is in dB.
+        def decibels(amplitude: float) -> str:
+            return f"{20 * math.log10(amplitude):.6g}" if amplitude > 0 else "-90"
+        _property(node, "shotcut:filter", "fadeInVolume" if operation["direction"] == "in" else "fadeOutVolume")
+        _property(node, "level", f"0={decibels(from_value)};{operation['duration'] - 1}={decibels(to_value)}")
     elif kind == "chroma_key":
         _property(node, "mlt_service", "frei0r.bluescreen0r")
         _property(node, "Color", operation.get("color", "#00ff00"))
@@ -171,9 +180,11 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
     profile = plan["profile"]
     base_dir = validated.source.resolve().parent
     assets = {asset["id"]: asset for asset in plan["assets"]}
-    tracks = resolve_timeline(plan)
-    track_indexes = {track["id"]: index for index, track in enumerate(tracks)}
-    clip_track_indexes = {clip["id"]: index for index, track in enumerate(tracks) for clip in track["clips"]}
+    tracks = deepcopy(list(validated.resolved_tracks)) if validated.resolved_tracks else resolve_timeline(plan)
+    # Track 0 is an explicit black compositing base. Shotcut previews a tractor
+    # without one as transparent even though file consumers may flatten it.
+    track_indexes = {track["id"]: index + 1 for index, track in enumerate(tracks)}
+    clip_track_indexes = {clip["id"]: index + 1 for index, track in enumerate(tracks) for clip in track["clips"]}
     effects_by_target: dict[str, list[dict[str, Any]]] = {}
     speed_by_target: dict[str, dict[str, Any]] = {}
     for operation in plan.get("operations", []):
@@ -182,7 +193,31 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
         if operation.get("enabled", True) and operation["type"] == "speed":
             speed_by_target[operation["target"]] = operation
 
-    playlist_ids: list[str] = []
+    timeline_frames = max((
+        clip["timeline_start"] + clip["duration"]
+        for track in tracks for clip in track["clips"] if clip.get("enabled", True)
+    ), default=1)
+    clip_lookup = {clip["id"]: clip for track in tracks for clip in track["clips"]}
+    for operation in plan.get("operations", []):
+        if operation.get("enabled", True) and operation["type"] in {"caption", "overlay"}:
+            target_clip = clip_lookup.get(operation.get("target"))
+            start = operation.get("start", 0) + (target_clip["timeline_start"] if target_clip else 0)
+            timeline_frames = max(timeline_frames, start + operation["duration"])
+
+    background = ET.SubElement(root, "producer", {
+        "id": "ves_background_producer", "in": _time(0, profile),
+        "out": _time(timeline_frames - 1, profile),
+    })
+    _property(background, "resource", "black")
+    _property(background, "mlt_service", "color")
+    _property(background, "length", _time(timeline_frames, profile))
+    background_playlist = ET.SubElement(root, "playlist", {"id": "ves_background"})
+    ET.SubElement(background_playlist, "entry", {
+        "producer": "ves_background_producer", "in": _time(0, profile),
+        "out": _time(timeline_frames - 1, profile),
+    })
+
+    playlist_ids: list[str] = ["ves_background"]
     for track_index, track in enumerate(tracks):
         playlist_id = f"ves_playlist_{track_index}_{track['id']}"
         playlist_ids.append(playlist_id)
@@ -236,7 +271,9 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
         producer_id = f"ves_overlay_producer_{operation['id']}"
         playlist_ids.append(playlist_id)
         playlist = ET.SubElement(root, "playlist", {"id": playlist_id})
-        start, duration = operation.get("start", 0), operation["duration"]
+        target_clip = clip_lookup.get(operation.get("target"))
+        start = operation.get("start", 0) + (target_clip["timeline_start"] if target_clip else 0)
+        duration = operation["duration"]
         if start:
             ET.SubElement(playlist, "blank", {"length": _time(start, profile)})
         producer = ET.SubElement(root, "producer", {"id": producer_id, "in": _time(0, profile), "out": _time(duration - 1, profile)})
@@ -268,19 +305,38 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
     root.set("producer", "ves_main")
     _property(tractor, "shotcut", "1")
     _property(tractor, "shotcut:projectAudioChannels", profile["channels"])
+    _property(tractor, "video-editing-skill:profile.sample_rate", profile["sample_rate"])
+    _property(tractor, "video-editing-skill:profile.channels", profile["channels"])
     _property(tractor, "shotcut:projectFolder", "0")
     _property(tractor, "video-editing-skill:generator", GENERATOR)
     _property(tractor, "video-editing-skill:filter-catalog", FILTER_CATALOG_VERSION)
+    for name, value in sorted(plan["export"].items()):
+        _property(tractor, f"video-editing-skill:export.{name}", value)
     multitrack = ET.SubElement(tractor, "multitrack")
-    for playlist_id in playlist_ids:
-        ET.SubElement(multitrack, "track", {"producer": playlist_id})
-    for index in range(1, len(playlist_ids)):
+    playlist_kinds = ["background", *(track["kind"] for track in tracks)]
+    playlist_kinds.extend("video" for _ in range(len(playlist_ids) - len(playlist_kinds)))
+    for index, playlist_id in enumerate(playlist_ids):
+        attributes = {"producer": playlist_id}
+        if 0 < index <= len(tracks):
+            track = tracks[index - 1]
+            # Video clips retain their embedded audio unless explicitly muted.
+            hide_audio = bool(track.get("muted"))
+            hide_video = track["kind"] == "audio" or bool(track.get("hidden"))
+            if hide_audio and hide_video:
+                attributes["hide"] = "both"
+            elif hide_audio:
+                attributes["hide"] = "audio"
+            elif hide_video:
+                attributes["hide"] = "video"
+        ET.SubElement(multitrack, "track", attributes)
+    video_track_indexes = [index for index, kind in enumerate(playlist_kinds) if kind == "video"]
+    for index in video_track_indexes:
         transition = ET.SubElement(tractor, "transition", {"id": f"ves_composite_{index}"})
         _property(transition, "a_track", 0)
         _property(transition, "b_track", index)
         _property(transition, "mlt_service", "qtblend")
         _property(transition, "always_active", 1)
-    audio_track_indexes = [index for index, track in enumerate(tracks) if track["kind"] == "audio"]
+    audio_track_indexes = [index + 1 for index, track in enumerate(tracks) if not track.get("muted", False)]
     for index in audio_track_indexes:
         transition = ET.SubElement(tractor, "transition", {"id": f"ves_audio_mix_track_{index}"})
         _property(transition, "a_track", 0)

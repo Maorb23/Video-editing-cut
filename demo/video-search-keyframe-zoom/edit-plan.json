@@ -1,0 +1,96 @@
+{
+  "version": "1.0",
+  "profile": {
+    "width": 1920,
+    "height": 1140,
+    "frame_rate": {
+      "numerator": 30,
+      "denominator": 1
+    },
+    "sample_rate": 48000,
+    "channels": 2,
+    "progressive": true,
+    "colorspace": 709
+  },
+  "assets": [
+    {
+      "id": "video-search",
+      "path": "../assets/Video_search.mp4",
+      "kind": "video",
+      "duration_frames": 669,
+      "fingerprint": "sha256:32254033557603e460f31ebcef1fe42e320c12412f899cd5d996bd8c9cdf9193",
+      "probe": {
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "duration_seconds": "22315433/1000000",
+        "size_bytes": 29253973,
+        "video": {
+          "codec": "h264",
+          "width": 1920,
+          "height": 1140,
+          "pixel_format": "yuv420p",
+          "avg_frame_rate": "19200000/667463",
+          "r_frame_rate": "60/1",
+          "time_base": "1/30000",
+          "duration_frames": 640,
+          "progressive": true
+        },
+        "audio": {
+          "codec": "aac",
+          "sample_rate": 48000,
+          "channels": 2,
+          "channel_layout": "stereo"
+        }
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "id": "v1",
+      "kind": "video",
+      "name": "Screen recording with synchronized program audio",
+      "clips": [
+        {
+          "id": "screen-recording",
+          "asset_id": "video-search",
+          "timeline_start": 0,
+          "source_in": 0,
+          "duration": 669,
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "id": "typing-lyrics-typing-zoom",
+      "type": "transform",
+      "target": "screen-recording",
+      "start": 0,
+      "duration": 669,
+      "keyframes": [
+        {"frame": 0, "geometry": "0%/0%:100%x100%"},
+        {"frame": 90, "geometry": "0%/0%:100%x100%"},
+        {"frame": 105, "geometry": "-37.5%/0%:175%x175%"},
+        {"frame": 177, "geometry": "-37.5%/0%:175%x175%"},
+        {"frame": 195, "geometry": "0%/0%:100%x100%"},
+        {"frame": 510, "geometry": "0%/0%:100%x100%"},
+        {"frame": 540, "geometry": "0%/-15%:145%x145%"},
+        {"frame": 585, "geometry": "0%/-15%:145%x145%"},
+        {"frame": 600, "geometry": "0%/0%:100%x100%"},
+        {"frame": 615, "geometry": "-37.5%/0%:175%x175%"},
+        {"frame": 639, "geometry": "-37.5%/0%:175%x175%"},
+        {"frame": 654, "geometry": "0%/0%:100%x100%"},
+        {"frame": 668, "geometry": "0%/0%:100%x100%"}
+      ]
+    }
+  ],
+  "export": {
+    "format": "mp4",
+    "video_codec": "libx264",
+    "audio_codec": "aac",
+    "video_bitrate": "12M",
+    "audio_bitrate": "192k",
+    "pixel_format": "yuv420p",
+    "movflags": "+faststart"
+  }
+}

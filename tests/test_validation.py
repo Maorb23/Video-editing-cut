@@ -74,6 +74,47 @@ class ValidationTests(unittest.TestCase):
         }]
         self.assertIn("unsupported_transform_property", self.codes(plan))
 
+    def test_fingerprint_is_verified(self) -> None:
+        plan = valid_plan(self.asset)
+        plan["assets"][0]["fingerprint"] = "sha256:" + "0" * 64
+        self.assertIn("fingerprint_mismatch", self.codes(plan))
+
+    def test_structural_and_effect_ranges_are_revalidated(self) -> None:
+        plan = valid_plan(self.asset)
+        plan["operations"] = [{"id": "trim", "type": "trim", "target": "c1", "source_in": 250, "duration": 100}]
+        self.assertIn("invalid_range", self.codes(plan))
+        plan = valid_plan(self.asset)
+        plan["operations"] = [{"id": "move", "type": "transform", "target": "c1", "start": 99, "duration": 2}]
+        self.assertIn("invalid_range", self.codes(plan))
+
+    def test_legacy_v1_operation_properties_remain_accepted(self) -> None:
+        plan = valid_plan(self.asset)
+        plan["operations"] = [{"id": "mix", "type": "audio_mix", "target": "v1", "pan": 0.5}]
+        self.validate(plan)
+        plan = valid_plan(self.asset)
+        plan["operations"] = [{"id": "speed", "type": "speed", "target": "c1", "factor": 2, "start": 0}]
+        self.validate(plan)
+
+    def test_transition_cannot_reference_a_removed_clip(self) -> None:
+        plan = valid_plan(self.asset)
+        plan["tracks"].append({
+            "id": "v2", "kind": "video", "clips": [
+                {"id": "c2", "asset_id": "a", "timeline_start": 0, "source_in": 0, "duration": 100},
+            ],
+        })
+        plan["operations"] = [
+            {"id": "remove", "type": "remove", "target": "c2"},
+            {"id": "transition", "type": "transition", "from_clip_id": "c1", "to_clip_id": "c2", "duration": 10},
+        ]
+        self.assertIn("missing_target", self.codes(plan))
+
+    def test_standalone_path_confinement_is_opt_in_for_cli_compatibility(self) -> None:
+        plan = valid_plan(self.asset)
+        plan["assets"][0]["path"] = "../outside.mp4"
+        with self.assertRaises(PlanValidationError) as context:
+            validate_plan(plan, source=self.root / "edit-plan.json", check_files=False, require_confined_paths=True)
+        self.assertIn("unsafe_path", {issue.code for issue in context.exception.issues})
+
 
 if __name__ == "__main__":
     unittest.main()

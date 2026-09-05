@@ -39,6 +39,7 @@ coverage.xml
 *.swp
 *.swo
 *~
+service-data/
 
 # Interrupted video renders and atomic-write staging files
 *.partial.mp4

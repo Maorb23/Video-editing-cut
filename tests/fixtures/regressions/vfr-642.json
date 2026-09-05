@@ -1,0 +1,11 @@
+{
+  "incident": "vfr-642",
+  "duration_seconds": "4463/200",
+  "source_avg_frame_rate": "19200000/667463",
+  "source_nominal_frame_rate": "60/1",
+  "source_decoded_frames": 640,
+  "failed_source_frame": 642,
+  "project_frame_rate": "30/1",
+  "expected_project_frames": 669,
+  "invariant": "analysis samples CFR proxy project frames instead of VFR decoded-frame indices"
+}

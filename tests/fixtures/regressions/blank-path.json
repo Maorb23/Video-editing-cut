@@ -1,0 +1,6 @@
+{
+  "incident": "blank-path",
+  "source_path": "C:\\Users\\example\\Videos\\source.mp4",
+  "expected_error": "unsafe_path",
+  "invariant": "standalone plans contain only job-relative declared media resources"
+}

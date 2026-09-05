@@ -18,6 +18,8 @@ def frame_rate(numerator: int, denominator: int) -> Fraction:
 
 def parse_seconds(value: Any) -> Fraction:
     """Parse seconds without passing through binary floating point."""
+    if isinstance(value, Fraction):
+        return value
     if isinstance(value, bool):
         raise VideoEditingError("seconds must be a number or rational string", code="invalid_time")
     if isinstance(value, int):
@@ -55,4 +57,3 @@ def frames_to_mlt_time(frames: int, numerator: int, denominator: int) -> str:
     micros = (remainder * 1_000_000).__round__()
     whole_seconds, microseconds = divmod(micros, 1_000_000)
     return f"{int(hours):02d}:{int(minutes):02d}:{whole_seconds:02d}.{microseconds:06d}"
-

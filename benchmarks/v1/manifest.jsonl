@@ -1,0 +1,5 @@
+{"id":"keep-all","instruction":"Keep the whole video unchanged.","expected_operations":[]}
+{"id":"trim-start","instruction":"Remove the first second and keep the rest.","expected_operations":["trim"]}
+{"id":"caption","instruction":"Add the caption 'Hello' for the first second.","expected_operations":["caption"]}
+{"id":"zoom","instruction":"Slowly zoom in across the clip.","expected_operations":["transform"]}
+{"id":"audio-fade","instruction":"Fade the audio out over the final second.","expected_operations":["fade_audio"]}

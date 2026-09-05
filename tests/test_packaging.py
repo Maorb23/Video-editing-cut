@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -30,6 +31,18 @@ class PackagingTests(unittest.TestCase):
         forbidden = "manim" + "_skill"
         for path in ROOT.rglob("*.py"):
             self.assertNotIn(forbidden, path.read_text(encoding="utf-8"), str(path))
+
+    def test_standalone_runner_is_packaged(self) -> None:
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertEqual(project["project"]["scripts"]["video-edit-run"], "video_editing.cli.run_pipeline:main")
+        from video_editing.cli.run_pipeline import main
+        self.assertTrue(callable(main))
+
+    def test_worker_starts_a_virtual_display_for_qtblend(self) -> None:
+        containerfile = (ROOT / "Containerfile.worker").read_text(encoding="utf-8")
+        entrypoint = (ROOT / "service/worker-entrypoint.sh").read_text(encoding="utf-8")
+        self.assertIn("xvfb-run -a video-edit-worker", entrypoint)
+        self.assertIn('ENTRYPOINT ["/app/service/worker-entrypoint.sh"]', containerfile)
 
 
 if __name__ == "__main__":

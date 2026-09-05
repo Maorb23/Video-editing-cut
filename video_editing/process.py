@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Iterable
 
 from .errors import ExternalToolError
+from .supervisor import ProcessLimits, ProcessSupervisor
 
 
-def run_checked(arguments: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    try:
-        result = subprocess.run(
-            arguments, cwd=cwd, text=True, encoding="utf-8", errors="replace",
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-    except OSError as exc:
-        raise ExternalToolError(f"cannot execute {arguments[0]}: {exc}", code="tool_unavailable") from exc
+def run_checked(
+    arguments: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float = 120.0,
+    max_output_bytes: int = 1024 * 1024,
+) -> subprocess.CompletedProcess[str]:
+    supervised = ProcessSupervisor(ProcessLimits(
+        wall_timeout=timeout,
+        no_progress_timeout=timeout,
+        max_output_bytes=max_output_bytes,
+    )).run(arguments, cwd=cwd)
+    result = subprocess.CompletedProcess(arguments, supervised.returncode, supervised.stdout, supervised.stderr)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
         raise ExternalToolError(
@@ -24,4 +29,3 @@ def run_checked(arguments: list[str], *, cwd: Path | None = None) -> subprocess.
             code="external_tool_failed",
         )
     return result
-

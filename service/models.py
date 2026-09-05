@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class PublicState(str, Enum):
+    uploaded = "uploaded"
+    analyzing = "analyzing"
+    planning = "planning"
+    awaiting_approval = "awaiting_approval"
+    approved = "approved"
+    rendering = "rendering"
+    completed = "completed"
+    failed = "failed"
+
+
+class CreateEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    video_id: str = Field(pattern=r"^vid_[0-9a-f]{32}$")
+    instruction: str = Field(min_length=1, max_length=20_000)
+
+
+class ReviseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    instruction: str = Field(min_length=1, max_length=20_000)
+
+
+class ApproveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_id: str = Field(pattern=r"^pln_[0-9a-f]{32}$")
+
+
+class VideoResponse(BaseModel):
+    id: str
+    state: PublicState
+    filename: str
+
+
+class EditResponse(BaseModel):
+    id: str
+    state: PublicState
+    created_at: datetime
+    progress: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    iteration: int = 1
+    active_iteration: int | None = None
+    approved_iteration: int | None = None
+    preview_status: str = "queued"
+    render_status: str | None = None
+    plan_url: str | None = None
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PlanResponse(BaseModel):
+    edit_id: str
+    plan_id: str
+    status: str
+    summary: str
+    warnings: list[str]
+    edit_plan: dict[str, Any]
+    iteration: int = 1
+    parent_iteration: int | None = None
+    instruction: str = ""
+    plan_status: str = "awaiting_approval"
+    preview_status: str = "queued"
+    render_status: str | None = None
+    preview_url: str | None = None
+    poster_url: str | None = None
+    inspection_url: str | None = None
+    video_url: str | None = None
+    decision_log: dict[str, Any] = Field(default_factory=lambda: {"observations": [], "decisions": [], "unsupported": [], "assumptions": []})
+    error: dict[str, Any] | None = None
+
+
+class ResultResponse(BaseModel):
+    edit_id: str
+    state: PublicState
+    video_url: str
+    artifacts: dict[str, str]

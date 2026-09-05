@@ -1,0 +1,6 @@
+{
+  "incident": "corrupt-output",
+  "payload": "not-an-mp4",
+  "expected_error": "render_probe_failed",
+  "invariant": "an output is accepted only after FFprobe and complete decode gates"
+}

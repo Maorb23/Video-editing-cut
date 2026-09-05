@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from video_editing.probe import fingerprint
+
 
 def valid_plan(asset: Path) -> dict[str, Any]:
     return {
@@ -14,7 +16,7 @@ def valid_plan(asset: Path) -> dict[str, Any]:
         },
         "assets": [{
             "id": "a", "path": asset.name, "kind": "video", "duration_frames": 300,
-            "fingerprint": "sha256:abc", "probe": {},
+            "fingerprint": fingerprint(asset), "probe": {},
         }],
         "tracks": [{
             "id": "v1", "kind": "video", "name": "Vidéos",
@@ -23,4 +25,3 @@ def valid_plan(asset: Path) -> dict[str, Any]:
         "operations": [],
         "export": {"format": "mp4", "video_codec": "libx264", "audio_codec": "aac"},
     }
-

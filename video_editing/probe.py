@@ -11,6 +11,7 @@ from typing import Any
 
 from .errors import VideoEditingError
 from .process import run_checked
+from .supervisor import ProcessSupervisor
 
 
 def fingerprint(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -21,13 +22,19 @@ def fingerprint(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def probe_one(path: Path, *, ffprobe: str | None = None) -> dict[str, Any]:
+def probe_one(path: Path, *, ffprobe: str | None = None, supervisor: ProcessSupervisor | None = None) -> dict[str, Any]:
     if not path.is_file():
         raise VideoEditingError(f"media file not found: {path}", code="missing_asset")
     binary = ffprobe or shutil.which("ffprobe") or shutil.which("ffprobe.exe")
     if not binary:
         raise VideoEditingError("ffprobe is required; run check_environment.py for guidance", code="tool_unavailable")
-    result = run_checked([binary, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)])
+    arguments = [binary, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)]
+    if supervisor is None:
+        result = run_checked(arguments)
+    else:
+        result = supervisor.run(arguments)
+        if result.returncode:
+            raise VideoEditingError(f"ffprobe failed for {path}: {result.stderr or result.stdout}", code="invalid_probe")
     try:
         raw = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -68,4 +75,3 @@ def create_manifest(paths: list[Path], *, ffprobe: str | None = None) -> dict[st
         if used[base] > 1:
             asset["id"] = f"{base}-{used[base]}"
     return {"version": "1.0", "assets": assets}
-

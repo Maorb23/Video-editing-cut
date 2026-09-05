@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111827">
+    <title>Video editor</title>
+    <link rel="stylesheet" href="/web/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Video editor home">Video editor</a>
+        <button id="export-feedback" class="button button-secondary" type="button">Export feedback</button>
+      </header>
+
+      <section id="start-panel" class="panel" aria-labelledby="create-edit-heading">
+        <h1 id="create-edit-heading">Create a video edit</h1>
+        <p>Upload a video, describe the change, then review the plan and preview. Request changes or approve a final render.</p>
+        <form id="create-edit-form">
+          <label for="video-file">Video file</label>
+          <input id="video-file" name="file" type="file" accept="video/*" required>
+          <label for="instruction">What should change?</label>
+          <textarea id="instruction" name="instruction" rows="5" maxlength="20000" required placeholder="For example: Keep the dunk and follow-through, then add a caption without covering the rim."></textarea>
+          <button id="create-edit" class="button" type="submit">Create plan</button>
+          <p id="create-error" class="form-error hidden" role="alert"></p>
+        </form>
+      </section>
+
+      <section id="job-panel" class="panel hidden" aria-live="polite" aria-labelledby="edit-status-heading">
+        <h1 id="edit-status-heading">Edit status</h1>
+        <p id="edit-id" class="muted"></p>
+        <div class="progress" aria-label="Edit progress"><div id="progress-bar" class="progress-bar"></div></div>
+        <p id="status-message" role="status">Waiting to start.</p>
+        <button id="new-edit" class="button button-secondary" type="button">Start another edit</button>
+      </section>
+
+      <section id="plan-panel" class="panel hidden" aria-labelledby="plan-heading">
+        <h1 id="plan-heading">Review the proposed plan</h1>
+        <label for="iteration-selector">Iteration</label>
+        <select id="iteration-selector"></select>
+        <p id="iteration-status" role="status"></p>
+        <video id="preview-video" class="hidden" controls playsinline preload="metadata"></video>
+        <p id="plan-summary"></p>
+        <div id="plan-warnings" class="warnings hidden" role="alert"></div>
+        <h2>Observations</h2>
+        <div id="observations"></div>
+        <h2>Decisions</h2>
+        <div id="decisions"></div>
+        <h2>Unsupported requests</h2>
+        <div id="unsupported"></div>
+        <h2>Assumptions</h2>
+        <div id="assumptions"></div>
+        <p><a id="inspection-link" class="hidden" target="_blank" rel="noopener">View inspection report</a></p>
+        <p><a id="iteration-download" class="button hidden" download>Download this iteration</a></p>
+        <details>
+          <summary>View edit-plan JSON</summary>
+          <pre id="plan-document"></pre>
+        </details>
+        <button id="approve-plan" class="button" type="button">Approve and render</button>
+        <p class="muted">Previews render automatically. Approval starts a final render of the selected iteration.</p>
+        <form id="revision-form">
+          <label for="revision-instruction">Request changes</label>
+          <textarea id="revision-instruction" rows="3" maxlength="20000" required placeholder="Make the zoom less aggressive and brighten the video more."></textarea>
+          <p class="muted">Changes build on the latest plan and use the original source. Previous results stay available.</p>
+          <button id="request-changes" class="button button-secondary" type="submit">Request another iteration</button>
+          <p id="revision-error" role="alert"></p>
+        </form>
+      </section>
+
+      <section id="render-panel" class="panel hidden" aria-labelledby="render-heading">
+        <h1 id="render-heading">Render your video</h1>
+        <p>The plan is approved and ready to render.</p>
+        <button id="render-video" class="button" type="button">Render video</button>
+      </section>
+
+      <section id="result-panel" class="panel hidden" aria-labelledby="result-heading">
+        <h1 id="result-heading">Your video is ready</h1>
+        <video id="result-video" controls playsinline></video>
+        <p><a id="download-video" class="button" download>Download video</a></p>
+      </section>
+
+      <section id="failure-panel" class="panel hidden" aria-labelledby="failure-heading">
+        <h1 id="failure-heading">This edit needs attention</h1>
+        <p id="failure-message"></p>
+      </section>
+
+      <section id="feedback-panel" class="panel hidden" aria-labelledby="feedback-heading">
+        <h1 id="feedback-heading">Tell us how it went</h1>
+        <form id="feedback-form">
+          <fieldset>
+            <legend>Outcome</legend>
+            <label><input type="radio" name="outcome" value="good" required> The result is good</label>
+            <label><input type="radio" name="outcome" value="wrong_plan"> The plan missed my request</label>
+            <label><input type="radio" name="outcome" value="wrong_result"> The rendered video is wrong</label>
+            <label><input type="radio" name="outcome" value="other"> Something else went wrong</label>
+          </fieldset>
+          <label for="feedback-comment">Optional comment</label>
+          <textarea id="feedback-comment" rows="4" maxlength="4000" placeholder="What should have happened?"></textarea>
+          <button class="button button-secondary" type="submit">Save feedback</button>
+          <p id="feedback-status" class="muted" role="status"></p>
+        </form>
+      </section>
+    </main>
+    <script src="/web/app.js" defer></script>
+  </body>
+</html>

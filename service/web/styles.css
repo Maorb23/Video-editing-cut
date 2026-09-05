@@ -1,0 +1,31 @@
+:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; background: #f4f7fb; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.shell { width: min(760px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
+.site-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
+.brand { color: #172033; font-size: 1.2rem; font-weight: 750; text-decoration: none; }
+.panel { margin: 1rem 0; padding: 1.5rem; border: 1px solid #d9e1ef; border-radius: .75rem; background: #fff; box-shadow: 0 1px 2px #1720330d; }
+.panel h1 { margin: 0 0 .65rem; font-size: 1.35rem; }
+form { display: grid; gap: .75rem; margin-top: 1.25rem; }
+label { display: grid; gap: .35rem; font-weight: 600; }
+fieldset label { font-weight: 400; grid-template-columns: auto 1fr; align-items: center; }
+textarea, input[type="file"] { width: 100%; padding: .65rem; border: 1px solid #b9c6db; border-radius: .45rem; font: inherit; }
+textarea { resize: vertical; }
+select { max-width: 100%; margin: .5rem 0; padding: .65rem; border: 1px solid #b9c6db; border-radius: .45rem; font: inherit; }
+select:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+.button:disabled { opacity: .55; cursor: default; }
+.panel h2 { margin: 1.2rem 0 .4rem; font-size: 1.05rem; }
+.button { display: inline-flex; width: fit-content; justify-content: center; padding: .65rem .9rem; border: 1px solid #1d4ed8; border-radius: .45rem; background: #1d4ed8; color: #fff; font: inherit; font-weight: 650; text-decoration: none; cursor: pointer; }
+.button:hover { background: #1e40af; }
+.button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+.button-secondary { border-color: #9aa9be; background: #fff; color: #172033; }
+.button-secondary:hover { background: #edf2f9; }
+.hidden { display: none; }
+.muted { color: #58667b; }
+.warnings { margin: 1rem 0; padding: .8rem; border-left: 4px solid #b45309; background: #fffbeb; color: #78350f; }
+.form-error { margin: 0; color: #b42318; font-weight: 600; }
+.progress { height: .65rem; overflow: hidden; border-radius: 999px; background: #e5eaf2; }
+.progress-bar { width: 8%; height: 100%; background: #2563eb; transition: width .2s ease; }
+pre { max-height: 20rem; overflow: auto; padding: 1rem; border-radius: .45rem; background: #101827; color: #e5edf9; font-size: .8rem; }
+video { width: 100%; max-height: 440px; background: #101827; border-radius: .45rem; }
+@media (max-width: 540px) { .shell { width: min(100% - 1rem, 760px); padding-top: 1rem; } .panel { padding: 1rem; } }

@@ -62,21 +62,81 @@ class ProcessToolTests(unittest.TestCase):
             self.assertIn('"percent": 100', stream.getvalue())
 
     @patch("video_editing.render.subprocess.Popen")
-    def test_interrupted_render_terminates_and_removes_partial(self, popen: MagicMock) -> None:
+    def test_render_applies_validated_export_settings(self, popen: MagicMock) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = root / "project.mlt"
             project.write_text("<mlt/>", encoding="utf-8")
             output = root / "final.mp4"
-            partial = root / ".final.mp4.partial.mp4"
-            partial.write_bytes(b"partial")
+            process = MagicMock()
+            process.stdout = iter([])
+            process.wait.return_value = 0
+
+            def create_partial(arguments, **kwargs):
+                destination = next(value.removeprefix("avformat:") for value in arguments if value.startswith("avformat:"))
+                Path(destination).write_bytes(b"mp4")
+                return process
+
+            popen.side_effect = create_partial
+            render(
+                project, output, melt="melt", progress_stream=io.StringIO(),
+                export={"video_bitrate": "12M", "audio_bitrate": "160k", "pixel_format": "yuv420p", "movflags": "+faststart"},
+            )
+            arguments = popen.call_args.args[0]
+            self.assertIn("vb=12M", arguments)
+            self.assertNotIn("crf=18", arguments)
+            self.assertIn("ab=160k", arguments)
+
+    @patch("video_editing.render.subprocess.Popen")
+    def test_render_reads_compiled_export_metadata(self, popen: MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project.mlt"
+            project.write_text(
+                "<mlt><tractor><property name='video-editing-skill:export.video_bitrate'>2M</property>"
+                "<property name='video-editing-skill:export.pixel_format'>yuv420p</property>"
+                "<property name='video-editing-skill:export.movflags'>+faststart</property>"
+                "<property name='video-editing-skill:profile.sample_rate'>48000</property>"
+                "<property name='video-editing-skill:profile.channels'>2</property></tractor></mlt>",
+                encoding="utf-8",
+            )
+            output = root / "final.mp4"
+            process = MagicMock()
+            process.stdout = iter([])
+            process.wait.return_value = 0
+
+            def create_partial(arguments, **kwargs):
+                destination = next(value.removeprefix("avformat:") for value in arguments if value.startswith("avformat:"))
+                Path(destination).write_bytes(b"mp4")
+                return process
+
+            popen.side_effect = create_partial
+            render(project, output, melt="melt", progress_stream=io.StringIO())
+            self.assertIn("vb=2M", popen.call_args.args[0])
+            self.assertIn("frequency=48000", popen.call_args.args[0])
+            self.assertIn("channels=2", popen.call_args.args[0])
+
+    @patch("video_editing.render.uuid.uuid4")
+    @patch("video_editing.render.subprocess.Popen")
+    def test_interrupted_render_removes_only_its_owned_partial(self, popen: MagicMock, uuid4: MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project.mlt"
+            project.write_text("<mlt/>", encoding="utf-8")
+            output = root / "final.mp4"
+            uuid4.return_value.hex = "owned"
+            owned_partial = root / ".final.mp4.owned.partial.mp4"
+            legacy_partial = root / ".final.mp4.partial.mp4"
+            owned_partial.write_bytes(b"partial")
+            legacy_partial.write_bytes(b"user-owned")
             process = MagicMock()
             process.stdout.__iter__.side_effect = KeyboardInterrupt
             popen.return_value = process
             with self.assertRaises(KeyboardInterrupt):
                 render(project, output, melt="melt", progress_stream=io.StringIO())
             process.terminate.assert_called_once()
-            self.assertFalse(partial.exists())
+            self.assertFalse(owned_partial.exists())
+            self.assertTrue(legacy_partial.exists())
 
 
 if __name__ == "__main__":
