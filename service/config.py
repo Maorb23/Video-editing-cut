@@ -39,7 +39,9 @@ class Settings:
         if backend not in {"filesystem", "s3"}:
             raise ValueError("VIDEO_EDIT_STORAGE must be 'filesystem' or 's3'")
         return cls(
-            database_url=os.environ.get("VIDEO_EDIT_DATABASE_URL", ""),
+            # Railway/Postgres commonly exposes DATABASE_URL; retain the
+            # project-specific name as the preferred explicit override.
+            database_url=os.environ.get("VIDEO_EDIT_DATABASE_URL") or os.environ.get("DATABASE_URL", ""),
             storage_backend=backend,
             storage_root=Path(os.environ.get("VIDEO_EDIT_STORAGE_ROOT", "./service-data/objects")),
             work_root=Path(os.environ.get("VIDEO_EDIT_WORK_ROOT", "./service-data/jobs")),
@@ -58,10 +60,11 @@ class Settings:
             turnstile_secret_key=os.environ.get("MELVID_TURNSTILE_SECRET_KEY"),
             turnstile_site_key=os.environ.get("MELVID_TURNSTILE_SITE_KEY"),
             redis_url=os.environ.get("REDIS_URL"),
-            email_endpoint=os.environ.get("MELVID_EMAIL_ENDPOINT"),
-            email_api_key=os.environ.get("MELVID_EMAIL_API_KEY"),
-            email_from=os.environ.get("MELVID_EMAIL_FROM", "Melvid <no-reply@melvid.example>"),
-            email_provider=os.environ.get("MELVID_EMAIL_PROVIDER", "generic"),
+            email_endpoint=os.environ.get("MELVID_EMAIL_ENDPOINT")
+            or ("https://api.resend.com/emails" if os.environ.get("EMAIL_PROVIDER", os.environ.get("MELVID_EMAIL_PROVIDER", "generic")).lower() == "resend" else None),
+            email_api_key=os.environ.get("RESEND_API_KEY") or os.environ.get("MELVID_EMAIL_API_KEY"),
+            email_from=os.environ.get("DEFAULT_FROM_MAIL") or os.environ.get("MELVID_EMAIL_FROM", "Melvid <no-reply@melvid.example>"),
+            email_provider=os.environ.get("EMAIL_PROVIDER") or os.environ.get("MELVID_EMAIL_PROVIDER", "generic"),
         )
 
     def validate(self) -> None:

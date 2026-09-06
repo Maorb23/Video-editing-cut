@@ -277,6 +277,16 @@ CAPTCHA enforcement, and suppresses delivery. See `.env.example`. Production
 HTTPS deployments must set `VIDEO_EDIT_SESSION_COOKIE_SECURE=true` and a
 stable random `VIDEO_EDIT_DJANGO_SECRET_KEY`.
 
+For Resend, configure `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and
+`DEFAULT_FROM_MAIL=Readwoods <verify@readwoods.com>` using a domain verified in
+Resend. The API endpoint defaults to `https://api.resend.com/emails`.
+The older `MELVID_EMAIL_*` names remain accepted as migration aliases.
+
+For Railway, set `VIDEO_EDIT_DATABASE_URL` to the Postgres service reference
+`${{Postgres.DATABASE_URL}}`, or set the standard `DATABASE_URL` variable. Do
+not use `127.0.0.1` or `localhost`: those addresses point inside the API
+container, not to Railway's Postgres service.
+
 The API service can be deployed directly from source with the repository
 `Procfile`; Railway supplies `$PORT` and the command binds to `0.0.0.0`. Keep
 the worker as its own Railway service using `Containerfile.worker` (or an
