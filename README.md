@@ -301,8 +301,9 @@ unmetered operator tier: edits created while the account is staff snapshot
 `billing_exempt=true` and do not consume application credits. OpenAI and
 infrastructure usage still accrue to the operator account.
 
-`railway.toml` pins the API build command to install the optional service and
-Redis dependencies and runs `video-edit-migrate` as a pre-deploy command. If a
+`railway.toml` pins the API build command to install the optional service,
+Redis, and S3 dependencies and runs `video-edit-migrate` as a pre-deploy
+command. If a
 Railway service has explicit dashboard overrides, set the build command to
 `pip install -e '.[service,redis]'` and the pre-deploy command to
 `video-edit-migrate` (or remove the overrides so the checked-in configuration
