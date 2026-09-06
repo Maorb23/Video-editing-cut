@@ -53,7 +53,7 @@ class TransactionalEmailSender:
             raise RuntimeError("email provider API key is not configured")
         recipients = [to] if self.provider.lower() == "resend" else to
         payload = json.dumps({"from": self.from_email, "to": recipients, "subject": subject, "text": text}).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "User-Agent": "melvid/1.0"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
