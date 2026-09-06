@@ -71,3 +71,19 @@ class SaasAccountTests(IsolatedAsyncioTestCase):
                 self.assertEqual(statuses[-1], 429)
         finally:
             temporary.cleanup()
+
+    async def test_staff_edits_are_explicitly_unmetered(self) -> None:
+        temporary, repo, client = await self.make_client()
+        try:
+            async with client:
+                await client.post("/v1/auth/register", json={"email": "admin@example.com", "password": "password123"})
+                repo.users["admin@example.com"]["is_staff"] = True
+                account = (await client.get("/v1/account")).json()
+                self.assertTrue(account["user"]["is_admin"])
+                self.assertEqual(account["credits"]["mode"], "unmetered")
+                video = await client.post("/v1/videos", files={"file": ("clip.mp4", b"media", "video/mp4")})
+                edit = await client.post("/v1/edits", json={"video_id": video.json()["id"], "instruction": "Keep the action"})
+                self.assertEqual(edit.status_code, 202)
+                self.assertTrue(repo.edit["billing_exempt"])
+        finally:
+            temporary.cleanup()

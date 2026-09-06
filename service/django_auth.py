@@ -70,10 +70,10 @@ class DjangoAuthentication:
         configure_django(database_url, secret_key)
 
     @staticmethod
-    def _public_user(user: Any) -> dict[str, str]:
-        return {"id": str(user.pk), "email": user.email}
+    def _public_user(user: Any) -> dict[str, Any]:
+        return {"id": str(user.pk), "email": user.email, "is_staff": bool(user.is_staff)}
 
-    def register(self, *, email: str, password: str) -> dict[str, str]:
+    def register(self, *, email: str, password: str) -> dict[str, Any]:
         from django.db import IntegrityError
         from service.django_accounts.models import Account
 
@@ -84,7 +84,7 @@ class DjangoAuthentication:
             raise ConflictError("an account with that email already exists") from exc
         return self._public_user(user)
 
-    def create_session(self, *, email: str, password: str) -> tuple[dict[str, str], str]:
+    def create_session(self, *, email: str, password: str) -> tuple[dict[str, Any], str]:
         from django.contrib.auth import BACKEND_SESSION_KEY, HASH_SESSION_KEY, SESSION_KEY, authenticate
         from django.contrib.sessions.backends.db import SessionStore
 
@@ -101,7 +101,7 @@ class DjangoAuthentication:
             raise RuntimeError("Django did not create a session key")
         return self._public_user(user), session.session_key
 
-    def get_session_user(self, token: str) -> dict[str, str]:
+    def get_session_user(self, token: str) -> dict[str, Any]:
         from django.contrib.auth import HASH_SESSION_KEY, SESSION_KEY
         from django.contrib.auth.hashers import constant_time_compare
         from django.contrib.sessions.backends.db import SessionStore

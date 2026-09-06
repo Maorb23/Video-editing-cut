@@ -36,7 +36,7 @@ class FakeRepository:
     def register(self, *, email, password):
         if email in self.users:
             raise ConflictError("an account with that email already exists")
-        user = {"id": "usr_" + str(len(self.users) + 1) * 32, "email": email}
+        user = {"id": "usr_" + str(len(self.users) + 1) * 32, "email": email, "is_staff": False}
         self.users[email] = user
         return user
 
@@ -80,10 +80,10 @@ class FakeRepository:
         self.video = {"id": values["video_id"], "state": "uploaded", "filename": values["filename"], **values}
         return self.video
 
-    def create_edit(self, *, video_id, instruction, user_id=None):
+    def create_edit(self, *, video_id, instruction, user_id=None, billing_exempt=False):
         if not self.video or video_id != self.video["id"] or (user_id and self.video.get("user_id") != user_id):
             raise NotFoundError("video not found")
-        self.edit = {"id": "edt_" + "2" * 32, "state": "analyzing", "created_at": datetime.now(timezone.utc), "progress": {"stage": "queued"}, "user_id": user_id}
+        self.edit = {"id": "edt_" + "2" * 32, "state": "analyzing", "created_at": datetime.now(timezone.utc), "progress": {"stage": "queued"}, "user_id": user_id, "billing_exempt": billing_exempt}
         return self.edit
 
     def get_edit(self, edit_id, user_id=None):

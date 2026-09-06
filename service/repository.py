@@ -144,14 +144,14 @@ class PostgresRepository:
                 ).fetchall()
         return rows
 
-    def create_edit(self, *, video_id: str, instruction: str, user_id: str | None = None) -> dict[str, Any]:
+    def create_edit(self, *, video_id: str, instruction: str, user_id: str | None = None, billing_exempt: bool = False) -> dict[str, Any]:
         edit_id, job_id = new_id("edt"), new_id("job")
         with self._connect() as connection:
             if not connection.execute("SELECT 1 FROM videos WHERE id=%s AND state='uploaded' AND (%s::text IS NULL OR user_id=%s)", (video_id, user_id, user_id)).fetchone():
                 raise NotFoundError("video not found")
             edit = connection.execute(
-                "INSERT INTO edits(id,video_id,instruction,state,progress,user_id) VALUES (%s,%s,%s,'analyzing',%s,%s) RETURNING *",
-                (edit_id, video_id, instruction, json.dumps({"stage": "queued"}), user_id),
+                "INSERT INTO edits(id,video_id,instruction,state,progress,user_id,billing_exempt) VALUES (%s,%s,%s,'analyzing',%s,%s,%s) RETURNING *",
+                (edit_id, video_id, instruction, json.dumps({"stage": "queued"}), user_id, billing_exempt),
             ).fetchone()
             connection.execute("INSERT INTO iterations(edit_id,iteration,instruction,user_id) VALUES (%s,1,%s,%s)", (edit_id, instruction, user_id))
             connection.execute("INSERT INTO jobs(id,edit_id,kind,status) VALUES (%s,%s,'plan','queued')", (job_id, edit_id))
@@ -335,7 +335,8 @@ class PostgresRepository:
                 c.execute(
                     """INSERT INTO credit_ledger_entries(id,user_id,amount,reason,edit_id,idempotency_key,metadata)
                        SELECT %s,user_id,-25,'generation',id,%s,%s FROM edits
-                       WHERE id=%s AND user_id IS NOT NULL ON CONFLICT(user_id,idempotency_key) DO NOTHING""",
+                       WHERE id=%s AND user_id IS NOT NULL AND billing_exempt=false
+                       ON CONFLICT(user_id,idempotency_key) DO NOTHING""",
                     (new_id("crd"), f"generation:{job.edit_id}:{job.iteration}", json.dumps({"iteration": job.iteration}), job.edit_id),
                 )
                 c.execute("UPDATE iterations SET status='completed',render_status='succeeded' WHERE edit_id=%s AND iteration=%s", (job.edit_id, job.iteration))

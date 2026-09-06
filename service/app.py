@@ -142,7 +142,11 @@ def create_app(
 
     async def user_payload(user: dict[str, Any]) -> UserResponse:
         profile = await run_blocking(repo.get_profile, user["id"]) if hasattr(repo, "get_profile") else {}
-        return UserResponse(id=user["id"], email=user["email"], email_verified=bool(profile.get("email_verified_at")), avatar_key=profile.get("avatar_key", "camera"))
+        return UserResponse(id=user["id"], email=user["email"], email_verified=bool(profile.get("email_verified_at")),
+                            avatar_key=profile.get("avatar_key", "camera"), is_admin=bool(user.get("is_staff", False)))
+
+    def billing_payload(summary: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+        return {**summary, "mode": "unmetered" if user.get("is_staff", False) else "credits"}
 
     def session_response(user: UserResponse, token: str) -> JSONResponse:
         response = JSONResponse(status_code=status.HTTP_201_CREATED, content=user.model_dump(mode="json"))
@@ -237,7 +241,7 @@ def create_app(
     async def account(request: Request) -> dict[str, Any]:
         user = await authenticated_user(request)
         profile = await run_blocking(repo.get_profile, user["id"])
-        credits = await run_blocking(repo.credit_summary, user["id"])
+        credits = billing_payload(await run_blocking(repo.credit_summary, user["id"]), user)
         return {"user": (await user_payload(user)).model_dump(mode="json"), "profile": profile, "credits": credits}
 
     @application.put("/v1/account/avatar")
@@ -261,7 +265,7 @@ def create_app(
     @application.get("/v1/billing/credits")
     async def credits(request: Request) -> dict[str, Any]:
         user = await authenticated_user(request)
-        return await run_blocking(repo.credit_summary, user["id"])
+        return billing_payload(await run_blocking(repo.credit_summary, user["id"]), user)
 
     @application.post("/v1/billing/mock-top-ups", status_code=201)
     async def mock_top_up(payload: TopUpRequest, request: Request) -> dict[str, Any]:
@@ -270,7 +274,7 @@ def create_app(
         if not package:
             raise HTTPException(422, detail={"code": "unknown_package", "message": "credit package is unavailable", "retryable": False})
         order = await run_blocking(repo.create_mock_top_up, user["id"], package, payload.simulate == "success")
-        return {"order": order, "credits": await run_blocking(repo.credit_summary, user["id"]), "payment_mode": "mock"}
+        return {"order": order, "credits": billing_payload(await run_blocking(repo.credit_summary, user["id"]), user), "payment_mode": "mock"}
 
     def edit_response(row: dict[str, Any]) -> EditResponse:
         iteration = row.get("current_iteration", 1)
@@ -330,7 +334,8 @@ def create_app(
     async def create_edit(request: CreateEditRequest, http_request: Request) -> EditResponse:
         try:
             user = await authenticated_user(http_request)
-            row = await run_blocking(repo.create_edit, video_id=request.video_id, instruction=request.instruction, user_id=user["id"])
+            row = await run_blocking(repo.create_edit, video_id=request.video_id, instruction=request.instruction,
+                                     user_id=user["id"], billing_exempt=bool(user.get("is_staff", False)))
         except (NotFoundError, ConflictError) as exc:
             raise missing_or_conflict(exc) from exc
         return edit_response(row)

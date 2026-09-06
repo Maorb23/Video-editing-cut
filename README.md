@@ -293,6 +293,14 @@ the worker as its own Railway service using `Containerfile.worker` (or an
 equivalent worker start command), sharing the same database, object storage,
 and required environment variables.
 
+Set `OPENAI_API_KEY` on the worker service only and seal it in Railway. The API
+service does not need the key. Use a dedicated OpenAI project/service-account
+key, apply project spend and rate limits, and rotate the Railway variable if
+the key is ever exposed. Staff (`is_staff=true`) accounts are an explicit
+unmetered operator tier: edits created while the account is staff snapshot
+`billing_exempt=true` and do not consume application credits. OpenAI and
+infrastructure usage still accrue to the operator account.
+
 `railway.toml` pins the API build command to install the optional service and
 Redis dependencies and runs `video-edit-migrate` as a pre-deploy command. If a
 Railway service has explicit dashboard overrides, set the build command to

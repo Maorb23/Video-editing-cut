@@ -42,6 +42,7 @@ class UserResponse(BaseModel):
     email: str
     email_verified: bool = False
     avatar_key: str = "camera"
+    is_admin: bool = False
 
 
 class EmailRequest(BaseModel):
