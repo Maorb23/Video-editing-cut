@@ -5,7 +5,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Protocol
-from urllib import parse, request
+from urllib import error, parse, request
 
 
 log = logging.getLogger(__name__)
@@ -48,15 +48,20 @@ class TransactionalEmailSender:
 
     def send(self, *, to: str, subject: str, text: str) -> None:
         if not self.endpoint:
-            log.info("transactional_email_suppressed to=%s subject=%s", to, subject)
-            return
+            raise RuntimeError("email provider endpoint is not configured")
+        if not self.api_key:
+            raise RuntimeError("email provider API key is not configured")
         recipients = [to] if self.provider.lower() == "resend" else to
         payload = json.dumps({"from": self.from_email, "to": recipients, "subject": subject, "text": text}).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        with request.urlopen(request.Request(self.endpoint, data=payload, headers=headers, method="POST"), timeout=8):
-            pass
+        try:
+            with request.urlopen(request.Request(self.endpoint, data=payload, headers=headers, method="POST"), timeout=8) as response:
+                log.info("transactional_email_accepted provider=%s status=%s to=%s", self.provider, response.status, to)
+        except error.HTTPError as exc:
+            detail = exc.read(2048).decode("utf-8", errors="replace")
+            raise RuntimeError(f"email provider rejected request (HTTP {exc.code}): {detail}") from exc
 
 
 class RateLimiter(Protocol):

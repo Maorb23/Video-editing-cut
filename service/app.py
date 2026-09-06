@@ -37,6 +37,11 @@ def create_app(
     objects = storage or build_storage(selected)
     captcha = TurnstileVerifier(selected.turnstile_secret_key)
     email_sender = TransactionalEmailSender(selected.email_endpoint, selected.email_api_key, selected.email_from, selected.email_provider)
+    import logging
+    logging.getLogger(__name__).info(
+        "email_provider_configured provider=%s endpoint=%s api_key_configured=%s from=%s",
+        selected.email_provider, selected.email_endpoint or "none", bool(selected.email_api_key), selected.email_from,
+    )
     limiter = build_rate_limiter(selected.redis_url)
     application = FastAPI(title="Melvid API", version="1.1.0")
     web_root = Path(__file__).with_name("web").resolve()
