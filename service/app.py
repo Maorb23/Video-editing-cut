@@ -51,14 +51,16 @@ def create_app(
         {"key": "large", "name": "Studio", "credits": 2000, "price_minor": 4900, "currency": "USD"},
     ]
 
-    async def deliver_email(*, to: str, subject: str, text: str) -> None:
+    async def deliver_email(*, to: str, subject: str, text: str) -> bool:
         try:
             await run_blocking(email_sender.send, to=to, subject=subject, text=text)
+            return True
         except Exception:
             # Account creation/reset remains safe if the provider is temporarily unavailable;
             # the user can request another verification email.
             import logging
             logging.getLogger(__name__).exception("transactional email delivery failed")
+            return False
 
     @application.middleware("http")
     async def security(request: Request, call_next: Callable[..., Awaitable[Response]]) -> Response:
@@ -207,7 +209,9 @@ def create_app(
         user = await authenticated_user(request)
         if limiter.allow(f"verify:{user['id']}", 3, 3600) and hasattr(auth, "issue_token"):
             token = await run_blocking(auth.issue_token, user, "verify-email")
-            await deliver_email(to=user["email"], subject="Verify your Melvid email", text=f"Verify your account: {selected.public_base_url}/?verify={token}")
+            sent = await deliver_email(to=user["email"], subject="Verify your Melvid email", text=f"Verify your account: {selected.public_base_url}/?verify={token}")
+            if not sent:
+                raise HTTPException(status_code=503, detail={"code": "email_delivery_unavailable", "message": "Verification email could not be sent. Check the email provider configuration and try again.", "retryable": True})
         return {"message": "If verification is still needed, an email has been sent."}
 
     @application.post("/v1/auth/forgot-password", status_code=202)

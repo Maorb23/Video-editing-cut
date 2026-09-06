@@ -62,9 +62,9 @@ class Settings:
             redis_url=os.environ.get("REDIS_URL"),
             email_endpoint=os.environ.get("MELVID_EMAIL_ENDPOINT")
             or ("https://api.resend.com/emails" if os.environ.get("EMAIL_PROVIDER", os.environ.get("MELVID_EMAIL_PROVIDER", "generic")).lower() == "resend" else None),
-            email_api_key=os.environ.get("RESEND_API_KEY") or os.environ.get("MELVID_EMAIL_API_KEY"),
-            email_from=os.environ.get("DEFAULT_FROM_MAIL") or os.environ.get("MELVID_EMAIL_FROM", "Melvid <no-reply@melvid.example>"),
-            email_provider=os.environ.get("EMAIL_PROVIDER") or os.environ.get("MELVID_EMAIL_PROVIDER", "generic"),
+            email_api_key=(os.environ.get("RESEND_API_KEY") or os.environ.get("MELVID_EMAIL_API_KEY") or "").strip() or None,
+            email_from=(os.environ.get("DEFAULT_FROM_MAIL") or os.environ.get("MELVID_EMAIL_FROM", "Melvid <no-reply@melvid.example>")).strip(),
+            email_provider=(os.environ.get("EMAIL_PROVIDER") or os.environ.get("MELVID_EMAIL_PROVIDER", "generic")).strip(),
         )
 
     def validate(self) -> None:
