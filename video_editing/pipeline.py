@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .analysis import AnalysisProvider, FrameAnalysisProvider
+from .audio import prepare_dereverb
 from .artifacts import artifact_record, validate_compiled_mlt, validate_rendered_video
 from .errors import VideoEditingError
 from .inspect import inspect
@@ -70,6 +71,10 @@ def run_pipeline(
         source = workspace.import_media(video)
         source_relative = source.relative_to(workspace.root).as_posix()
 
+        stage = "dereverb"
+        dereverb = prepare_dereverb(instruction, source, workspace, selected_tools,
+                                    timeout=process_timeout, max_diagnostic_bytes=max_diagnostic_bytes)
+
         stage = "analysis"
         selected_analyzer = analyzer or FrameAnalysisProvider(frame_rate=frame_rate, max_samples=max_analysis_frames)
         analysis = selected_analyzer.analyze(source, workspace, selected_tools, supervisor)
@@ -78,7 +83,7 @@ def run_pipeline(
         selected_model = model or OpenAIResponsesModel(model=model_name or os.environ.get("VIDEO_EDIT_MODEL", "gpt-5.6"))
         planner = EditPlanner(selected_model, max_repair_attempts=max_repair_attempts)
         plan_path = workspace.path("edit-plan.json")
-        planned = planner.plan(instruction, analysis, plan_path=plan_path, source_relative=source_relative)
+        planned = planner.plan(instruction, analysis, plan_path=plan_path, source_relative=source_relative, dereverb=dereverb)
         workspace.write_json("edit-plan.json", planned.plan.data)
         decisions_path = workspace.write_json("decisions.json", planned.decision_log)
         workspace.write_json("work/resolved-timeline.json", {
@@ -133,6 +138,7 @@ def run_pipeline(
             "timeline_policy": analysis.data["timeline_policy"],
             "toolchain": versions,
             "planning": {"attempts": list(planned.attempts)},
+            "dereverb_provenance": planned.plan.data.get("analysis", {}).get("dereverb"),
             "decision_log": planned.decision_log,
             "compilation_validation": compilation,
             "render_validation": validation,

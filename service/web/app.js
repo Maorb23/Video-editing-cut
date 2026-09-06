@@ -180,7 +180,7 @@
       const [message, percent] = states[edit.state] || ["Working on your edit.", 15];
       el("edit-id").textContent = `Edit ${editId}`;
       el("status-message").textContent = edit.progress?.message || message;
-      el("progress-bar").style.width = `${percent}%`;
+      el("progress-bar").style.width = `${edit.progress?.percent ?? percent}%`;
       const hasPlan = await loadIterations(edit);
       if (sequence !== refreshSequence) return;
       const visible = ["job-panel", "feedback-panel", ...(hasPlan ? ["plan-panel"] : [])];

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,9 @@ from typing import Any
 from ..analysis import AnalysisArtifact
 from ..errors import PlanValidationError, VideoEditingError
 from ..filters import FILTERS
+from ..audio import wants_dereverb, wav_metadata, validate_audio_metadata
+from ..operations import resolve_timeline
+from ..probe import fingerprint
 from ..plan import OP_FIELDS, OP_REQUIRED, OP_TYPES, validate_plan
 from .base import PlanResult, StructuredModel
 from .decisions import decision_schema, validate_decisions
@@ -209,10 +213,23 @@ class EditPlanner:
 
     def plan(self, instruction: str, analysis: AnalysisArtifact, *, plan_path: Path, source_relative: str,
              previous_plan: dict[str, Any] | None = None, original_instruction: str | None = None,
-             allow_unsupported: bool = False) -> PlanResult:
+             allow_unsupported: bool = False, dereverb: dict[str, Any] | None = None) -> PlanResult:
         if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 20_000:
             raise VideoEditingError("instruction must contain 1 to 20,000 characters", code="invalid_instruction")
         facts = deepcopy(analysis.data)
+        requires_dereverb = wants_dereverb(instruction) or any(
+            op.get("type") == "dereverb" and op.get("enabled", True)
+            for op in (previous_plan or {}).get("operations", []))
+        if requires_dereverb and dereverb is None:
+            raise VideoEditingError("room echo cleaning requires successful local dereverb preflight", code="dereverb_unavailable")
+        if dereverb:
+            facts["dereverb"] = {"status": "completed", "model": dereverb["manifest"]["model"],
+                                "assembly": "The engine automatically adds cleaned audio and dereverb operations; omit them from the draft."}
+        previous_context = deepcopy(previous_plan)
+        if previous_context:
+            previous_context.pop("analysis", None)
+            for asset in previous_context.get("assets", []):
+                asset.pop("path", None)
         evidence = set()
         for observation in facts.get("observations", []):
             path = observation.pop("path", None)
@@ -223,7 +240,7 @@ class EditPlanner:
         if isinstance(audio_evidence, dict) and isinstance(audio_evidence.get("evidence_id"), str):
             evidence.add(audio_evidence["evidence_id"])
         base_input = json.dumps({"instruction": instruction, "original_instruction": original_instruction,
-                                 "previous_plan": previous_plan, "analysis": facts}, ensure_ascii=False)
+                                 "previous_plan": previous_context, "analysis": facts}, ensure_ascii=False)
         attempts: list[dict[str, Any]] = []
         repair_text: str | None = None
         for attempt_index in range(self.max_repair_attempts + 1):
@@ -249,6 +266,43 @@ class EditPlanner:
             if any(operation.get("type") == "mask" for operation in draft.get("operations", []) if isinstance(operation, dict)):
                 raise VideoEditingError("standalone mask operations require an external resource and are unsupported", code="unsupported_instruction")
             candidate = self._assemble(draft, analysis, source_relative)
+            if dereverb:
+                manifest = dereverb["manifest"]
+                candidate["assets"].append({"id": "dereverb_audio", "path": dereverb["asset_path"], "kind": "audio",
+                    "duration_frames": analysis.data["source"]["duration_frames"],
+                    "fingerprint": manifest["output_sha256"], "probe": {"audio": manifest["audio"]}})
+                candidate["operations"] = [op for op in candidate["operations"] if op.get("type") != "dereverb"]
+                # A cleaning-only revision must not erase previous work merely
+                # because the model returns an empty operations array.
+                cleaning_only = re.fullmatch(r"\s*(?:please\s+)?(?:remove\s+(?:(?:the|room)\s+)*(?:echo|reverb(?:eration)?)|dereverberate)(?:\s+(?:the\s+)?(?:audio|video|clip))?[.!]?\s*", instruction, re.IGNORECASE)
+                if previous_plan and cleaning_only:
+                    candidate["tracks"] = deepcopy(previous_plan.get("tracks", candidate["tracks"]))
+                    candidate["export"] = deepcopy(previous_plan.get("export", candidate["export"]))
+                    candidate["operations"] = [deepcopy(op) for op in previous_plan.get("operations", []) if op["type"] != "dereverb"]
+                try:
+                    resolved = resolve_timeline(candidate)
+                except VideoEditingError:
+                    # Let validate_plan report structural errors to bounded repair.
+                    resolved = []
+                for track in resolved:
+                    for clip in track["clips"]:
+                        if clip["asset_id"] == "source" and clip.get("enabled", True):
+                            candidate["operations"].append({"id": f"dereverb_{clip['id']}", "type": "dereverb",
+                                "target": clip["id"], "derived_asset_id": "dereverb_audio",
+                                "model": manifest["model"], "model_sha256": manifest["model_sha256"]})
+                candidate["analysis"] = {"dereverb": deepcopy(manifest)}
+                derived_path = (plan_path.resolve().parent / dereverb["asset_path"]).resolve()
+                try:
+                    derived_path.relative_to(plan_path.resolve().parent)
+                except ValueError as exc:
+                    raise VideoEditingError("derived audio escapes the job workspace", code="unsafe_path") from exc
+                if not derived_path.is_file():
+                    raise VideoEditingError("preflighted derived audio is missing", code="derived_asset_missing")
+                if fingerprint(derived_path) != manifest["output_sha256"]:
+                    raise VideoEditingError("preflighted derived audio fingerprint changed", code="fingerprint_mismatch")
+                validate_audio_metadata(wav_metadata(derived_path), manifest["audio"])
+            elif any(op.get("type") == "dereverb" for op in candidate.get("operations", [])):
+                raise VideoEditingError("planner requested dereverb without a verified derived asset", code="dereverb_unavailable")
             try:
                 validated = validate_plan(candidate, source=plan_path, check_files=True, require_confined_paths=True)
                 if analysis.data["source"].get("audio") and not any(

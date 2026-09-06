@@ -550,6 +550,12 @@ def validate_plan(
             timed_effects = {"caption", "overlay", "transform", "volume", "fade_audio", "chroma_key", "mask", "filter",
                              "color_grade", "parametric_eq", "reverb", "dereverb"}
             speed_targets: set[str] = set()
+            dereverb_targets: set[str] = set()
+            dereverb_audio_metadata: dict[str, dict] = {}
+            provenance = data.get("analysis", {}).get("dereverb") if isinstance(data.get("analysis", {}), dict) else None
+            if provenance is not None and not isinstance(provenance, dict):
+                issues.append(Issue("invalid_dereverb_provenance", "$.analysis.dereverb", "must be an object"))
+                provenance = None
             transform_spans: dict[str, list[tuple[int, int]]] = {}
             if not active_clip_ids:
                 issues.append(Issue("empty_timeline", "$.operations", "structural operations leave no enabled clips to render"))
@@ -558,6 +564,33 @@ def validate_plan(
                     continue
                 kind = operation["type"]
                 target = operation.get("target")
+                if kind == "dereverb":
+                    if target in dereverb_targets:
+                        issues.append(Issue("conflicting_operation", f"$.operations[{index}]", "only one dereverb operation is supported per clip"))
+                    dereverb_targets.add(target)
+                    derived = asset_lookup[operation["derived_asset_id"]]
+                    clip = resolved_clips.get(target)
+                    if clip and derived["duration_frames"] < asset_lookup[clip["asset_id"]]["duration_frames"]:
+                        issues.append(Issue("audio_duration_mismatch", f"$.operations[{index}]", "derived audio must cover the full source"))
+                    if operation.get("start", 0) or ("duration" in operation and clip and operation["duration"] != clip["duration"]):
+                        issues.append(Issue("unsupported_dereverb_range", f"$.operations[{index}]", "dereverb applies to the full source audio"))
+                    if provenance is not None:
+                        if (provenance.get("model") != operation["model"] or provenance.get("model_sha256") != operation["model_sha256"]
+                                or provenance.get("output_sha256") != derived["fingerprint"]
+                                or (clip and provenance.get("input_sha256") != asset_lookup[clip["asset_id"]]["fingerprint"])):
+                            issues.append(Issue("fingerprint_mismatch", "$.analysis.dereverb", "provenance does not match source, model and derived asset"))
+                        if check_files:
+                            from .audio import wav_metadata, validate_audio_metadata
+                            if derived["id"] not in dereverb_audio_metadata:
+                                dereverb_audio_metadata[derived["id"]] = wav_metadata((base / derived["path"]).resolve())
+                            audio = dereverb_audio_metadata[derived["id"]]
+                            expected_audio = provenance.get("audio", {})
+                            if not isinstance(expected_audio, dict) or not all(field in expected_audio for field in ("samples", "channels", "sample_rate")):
+                                issues.append(Issue("invalid_audio_metadata", "$.analysis.dereverb.audio", "missing audio metadata"))
+                            else:
+                                validate_audio_metadata(audio, expected_audio)
+                                if audio["sample_rate"] != profile["sample_rate"] or audio["channels"] != profile["channels"]:
+                                    issues.append(Issue("audio_profile_mismatch", "$.analysis.dereverb.audio", "derived audio must match the project audio profile"))
                 if kind not in {"insert", "reorder", "transition", "audio_mix"} and target not in active_clip_ids:
                     issues.append(Issue("missing_target", f"$.operations[{index}].target", "target is absent or disabled after structural operations"))
                     continue
@@ -586,6 +619,21 @@ def validate_plan(
                     for field in ("from_clip_id", "to_clip_id"):
                         if operation.get(field) not in active_clip_ids:
                             issues.append(Issue("missing_target", f"$.operations[{index}].{field}", "clip is absent or disabled after structural operations"))
+            if dereverb_targets and not any(op["type"] == "audio_mix" and op.get("enabled", True) for op in operations):
+                cleaning_sources = {resolved_clips[target]["asset_id"] for target in dereverb_targets if target in resolved_clips}
+                audible_ranges: set[tuple] = set()
+                for track in resolved_tracks:
+                    if track.get("muted"):
+                        continue
+                    for clip in track["clips"]:
+                        if not clip.get("enabled", True) or clip["asset_id"] not in cleaning_sources:
+                            continue
+                        signature = (clip["asset_id"], clip["timeline_start"], clip["source_in"], clip["duration"])
+                        if signature in audible_ranges:
+                            issues.append(Issue("duplicate_audio", "$.tracks", "source audio is duplicated across tracks; use one audible source or explicit audio mixing"))
+                        audible_ranges.add(signature)
+        except PlanValidationError as exc:
+            issues.extend(exc.issues)
         except VideoEditingError as exc:
             issues.append(Issue(exc.code, "$.operations", str(exc)))
 

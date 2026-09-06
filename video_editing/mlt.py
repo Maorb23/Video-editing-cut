@@ -219,6 +219,37 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
         if operation.get("enabled", True) and operation["type"] == "dereverb":
             dereverb_by_target[operation["target"]] = operation
 
+    # Structural splits inherit cleaning of their parent. Audio routing is
+    # derived from the resolved timeline, so trims/reorders cannot drift.
+    for operation in plan.get("operations", []):
+        if operation.get("enabled", True) and operation["type"] == "split":
+            parent = operation["target"]
+            if parent in dereverb_by_target:
+                dereverb_by_target.setdefault(f"{parent}__{operation['id']}", dereverb_by_target[parent])
+    muted_clips: set[str] = set()
+    derived_asset_ids = {op["derived_asset_id"] for op in dereverb_by_target.values()}
+    audio_effects = {"volume", "fade_audio", "parametric_eq", "reverb"}
+    for track in list(tracks):
+        cleaned_clips = []
+        for clip in track["clips"]:
+            operation = dereverb_by_target.get(clip["id"])
+            if not operation or not clip.get("enabled", True):
+                continue
+            if track["kind"] == "audio":
+                clip["asset_id"] = operation["derived_asset_id"]
+                continue
+            muted_clips.add(clip["id"])
+            cleaned = {**clip, "id": f"dereverb_audio_{clip['id']}", "asset_id": operation["derived_asset_id"]}
+            cleaned_clips.append(cleaned)
+            effects = effects_by_target.get(clip["id"], [])
+            effects_by_target[cleaned["id"]] = [op for op in effects if op["type"] in audio_effects]
+            effects_by_target[clip["id"]] = [op for op in effects if op["type"] not in audio_effects]
+            if clip["id"] in speed_by_target:
+                speed_by_target[cleaned["id"]] = speed_by_target[clip["id"]]
+        if cleaned_clips:
+            tracks.append({"id": f"dereverb_audio_{track['id']}", "kind": "audio", "name": "Cleaned room echo",
+                           "muted": track.get("muted", False), "clips": cleaned_clips})
+
     timeline_frames = max((
         clip["timeline_start"] + clip["duration"]
         for track in tracks for clip in track["clips"] if clip.get("enabled", True)
@@ -258,8 +289,7 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
             if clip["timeline_start"] > cursor:
                 ET.SubElement(playlist, "blank", {"length": _time(clip["timeline_start"] - cursor, profile)})
             asset = assets[clip["asset_id"]]
-            dereverb = dereverb_by_target.get(clip["id"])
-            media_asset = assets[dereverb["derived_asset_id"]] if dereverb else asset
+            media_asset = asset
             producer_id = f"ves_producer_{track_index}_{clip_index}_{clip['id']}"
             producer = ET.SubElement(root, "producer", {
                 "id": producer_id,
@@ -280,6 +310,11 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
             _property(producer, "length", _time(asset["duration_frames"], profile))
             _property(producer, "shotcut:caption", clip["id"])
             _property(producer, "video-editing-skill:asset-id", asset["id"])
+            if clip["id"] in muted_clips:
+                _property(producer, "audio_index", -1)
+                _property(producer, "set.test_audio", 1)
+            if asset["id"] in derived_asset_ids:
+                _property(producer, "video-editing-skill:fingerprint", asset["fingerprint"])
             for operation in effects_by_target.get(clip["id"], []):
                 _add_filter(producer, operation, profile)
             entry = ET.SubElement(playlist, "entry", {

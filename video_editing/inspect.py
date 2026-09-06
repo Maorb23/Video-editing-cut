@@ -334,6 +334,7 @@ def inspect(
         peak_match = re.findall(r"max_volume:\s*(-?[\d.]+) dB", audio_evidence["volume"])
         silence_ends = re.findall(r"silence_end:\s*([\d.]+)", audio_evidence["silence"])
         audio_evidence["measurements"] = {
+            "dereverb_provenance": plan.get("analysis", {}).get("dereverb"),
             "mean_db": float(mean_match[-1]) if mean_match else None,
             "peak_db": float(peak_match[-1]) if peak_match else None,
             "last_silence_end_seconds": float(silence_ends[-1]) if silence_ends else None,

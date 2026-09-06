@@ -42,6 +42,21 @@ def canonical_digest(value: dict[str, Any]) -> str:
 
 
 class PostgresRepository:
+    def update_plan_progress(self, job: ClaimedJob, message: str) -> None:
+        stage = "dereverb" if message == "Cleaning room echo" else "planning"
+        progress = json.dumps({"stage": stage, "message": message, "status": "running",
+                               "iteration": job.iteration, "percent": 30 if stage == "dereverb" else 40})
+        with self._connect() as connection:
+            active = connection.execute(
+                "UPDATE jobs SET progress=%s,updated_at=now() WHERE id=%s AND status='running' AND attempts=%s AND claimed_by=%s RETURNING id",
+                (progress, job.id, job.attempts, job.claimed_by),
+            ).fetchone()
+            if active:
+                connection.execute(
+                    "UPDATE edits SET progress=%s,updated_at=now() WHERE id=%s AND current_iteration=%s",
+                    (progress, job.edit_id, job.iteration),
+                )
+
     def __init__(self, database_url: str) -> None:
         try:
             import psycopg

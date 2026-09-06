@@ -71,7 +71,13 @@ class CuratedEffectsTests(unittest.TestCase):
         root = compile_mlt(validate_plan(plan, source=self.root / "plan.json"), self.root / "out.mlt").getroot()
         producer = next(p for p in root.findall("producer") if p.get("id", "").startswith("ves_producer_"))
         props = {p.get("name"): p.text for p in producer.findall("property")}
-        self.assertEqual(props["resource"], "dereverbed.wav")
+        self.assertEqual(props["resource"], "source.mp4")
+        self.assertEqual(props["audio_index"], "-1")
+        producer = next(p for p in root.findall("producer")
+                        if p.find("./property[@name='resource']").text == "dereverbed.wav")
+        props = {p.get("name"): p.text for p in producer.findall("property")}
+        self.assertEqual(props["video-editing-skill:asset-id"], "clean")
+        self.assertEqual(props["video-editing-skill:fingerprint"], fingerprint(derived))
         services = [n.find("./property[@name='mlt_service']").text for n in producer.findall("filter")]
         self.assertEqual(services, ["avfilter.equalizer", "avfilter.aecho"])
 

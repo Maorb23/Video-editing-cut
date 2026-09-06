@@ -7,10 +7,11 @@ import os
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from video_editing.analysis import AnalysisProvider, FrameAnalysisProvider
 from video_editing.analysis.frames import source_frame_rate
+from video_editing.audio import prepare_dereverb
 from video_editing.artifacts import artifact_record, validate_compiled_mlt, validate_rendered_video
 from video_editing.errors import VideoEditingError
 from video_editing.inspect import inspect
@@ -62,6 +63,7 @@ def prepare_edit(
     no_progress_timeout: float = 180.0,
     max_diagnostic_bytes: int = 256 * 1024,
     cancellation: CancellationToken | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> PreparedEdit:
     prepared_path = job_directory / "work" / "prepared.json"
     if prepared_path.is_file():
@@ -81,6 +83,9 @@ def prepare_edit(
         stage = "ingest"
         source = workspace.import_media(video)
         source_relative = source.relative_to(workspace.root).as_posix()
+        stage = "dereverb"
+        dereverb = prepare_dereverb(instruction, source, workspace, tools, previous_plan=previous_plan, progress=progress,
+                                    timeout=process_timeout, max_diagnostic_bytes=max_diagnostic_bytes)
         stage = "analysis"
         selected_analyzer = analyzer or FrameAnalysisProvider(frame_rate=frame_rate, max_samples=max_analysis_frames)
         analysis = selected_analyzer.analyze(source, workspace, tools, supervisor)
@@ -90,10 +95,12 @@ def prepare_edit(
             if source_rate != Fraction(policy_rate["numerator"], policy_rate["denominator"]):
                 raise VideoEditingError("analysis did not preserve the source frame rate", code="frame_rate_mismatch")
         stage = "planning"
+        if progress:
+            progress("Creating a proposed plan")
         selected_model = model or OpenAIResponsesModel(model=model_name or os.environ.get("VIDEO_EDIT_MODEL", "gpt-5.6"))
         planned = EditPlanner(selected_model, max_repair_attempts=max_repair_attempts).plan(
             instruction, analysis, plan_path=workspace.path("edit-plan.json"), source_relative=source_relative,
-            previous_plan=previous_plan, original_instruction=original_instruction, allow_unsupported=True,
+            previous_plan=previous_plan, original_instruction=original_instruction, allow_unsupported=True, dereverb=dereverb,
         )
         plan_path = workspace.write_json("edit-plan.json", planned.plan.data)
         workspace.write_json("decisions.json", planned.decision_log)
@@ -183,6 +190,7 @@ def render_prepared_edit(
             "summary": prepared["summary"], "timeline_policy": analysis_data["timeline_policy"],
             "toolchain": {"planned": prepared["toolchain"], "rendered": current_versions},
             "planning": prepared["planning"], "compilation_validation": compilation,
+            "dereverb_provenance": plan.data.get("analysis", {}).get("dereverb"),
             "render_validation": validation, "accepted_render_id": attempt.id,
             "artifacts": {
                 "analysis": artifact_record(analysis_path, workspace.root),

@@ -54,12 +54,18 @@ def check_environment() -> dict[str, Any]:
     melt = _find(["melt", "melt-7", "melt.exe"], _shotcut_candidates())
     ffmpeg = _find(["ffmpeg", "ffmpeg.exe"])
     ffprobe = _find(["ffprobe", "ffprobe.exe"])
-    dereverb = _find(["deepFilter", "deep-filter"])
+    from .audio import dereverb_preflight, DEREVERB_DEPENDENCY
+    from .errors import VideoEditingError
+    try:
+        dereverb = dereverb_preflight()
+    except VideoEditingError as exc:
+        dereverb = {"available": False, "code": exc.code, "message": str(exc)}
     tools = {
         "melt": {"path": melt, "version": _version(melt), "required_for": ["compile validation", "render"]},
         "ffmpeg": {"path": ffmpeg, "version": _version(ffmpeg), "required_for": ["inspection frames", "audio analysis"]},
         "ffprobe": {"path": ffprobe, "version": _version(ffprobe), "required_for": ["media probing", "inspection metadata"]},
-        "dereverb": {"path": dereverb, "version": _version(dereverb), "required_for": ["optional immutable dereverberation stage"], "dependency": "deepfilternet==0.5.6"},
+        "dereverb": {**dereverb, "path": dereverb.get("executable"), "version": dereverb.get("executable_version"),
+                     "required_for": ["immutable room echo cleaning"], "dependency": DEREVERB_DEPENDENCY},
     }
     return {
         "ok": all(tools[name]["path"] for name in ("melt", "ffmpeg", "ffprobe")),

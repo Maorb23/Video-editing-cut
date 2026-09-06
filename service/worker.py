@@ -20,6 +20,7 @@ from video_editing.artifacts import validate_compiled_mlt
 from video_editing.inspect import inspect
 from video_editing.errors import VideoEditingError
 from video_editing.workspace import JobWorkspace
+from video_editing.audio import dereverb_preflight
 from video_editing.supervisor import Toolchain
 
 from .config import Settings
@@ -135,7 +136,8 @@ class Worker:
             parent = self.repository.get_plan(job.edit_id, job.parent_iteration) if job.parent_iteration else None
             original = self.repository.get_plan(job.edit_id, 1)["instruction"] if parent else job.instruction
             prepared = prepare_edit(source, job.instruction, workspace, toolchain=self._toolchain(),
-                                    previous_plan=parent["document"] if parent else None, original_instruction=original)
+                                    previous_plan=parent["document"] if parent else None, original_instruction=original,
+                                    progress=lambda message: self.repository.update_plan_progress(job, message))
             document = read_json(prepared.edit_plan)
             decisions = read_json(workspace / "decisions.json")
             self.repository.complete_plan(
@@ -276,6 +278,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     settings = Settings.from_env()
     settings.validate()
+    capability = dereverb_preflight()
+    emit("dereverb_ready", model=capability["model"], model_sha256=capability["model_sha256"],
+         executable_version=capability["executable_version"], device="cpu")
     repository = PostgresRepository(settings.database_url)
     worker = Worker(repository, build_storage(settings), settings)
     if args.once:
