@@ -34,7 +34,10 @@ def parse_silence_output(output: str, *, source: Path, frame_rate: Fraction,
                 end_frame = min(end_frame, round(Fraction(duration_seconds) * frame_rate))
             if end_frame <= start_frame or seconds - start < Fraction(str(minimum_seconds)):
                 continue
+            duration_frames = end_frame - start_frame
             intervals.append({"id": f"silence_{len(intervals):04d}", "start_frame": start_frame, "end_frame": end_frame,
+                              "duration_frames": duration_frames,
+                              "duration_seconds": str(Fraction(duration_frames, 1) / frame_rate),
                               "start_seconds": str(start), "end_seconds": str(seconds)})
     return {"kind": "ffmpeg_silencedetect", "source": str(source.resolve()),
             "settings": {"threshold_db": threshold_db, "minimum_seconds": minimum_seconds},
@@ -43,13 +46,14 @@ def parse_silence_output(output: str, *, source: Path, frame_rate: Fraction,
 
 
 def detect_silence(source: Path, *, frame_rate: Fraction, ffmpeg: str = "ffmpeg",
-                   threshold_db: float | None = None, minimum_seconds: float = 0.5,
+                   threshold_db: float | None = None, minimum_seconds: float = 0.25,
                    settings: SilenceSettings | None = None, duration_seconds=None,
-                   supervisor=None) -> dict[str, Any]:
+                   supervisor=None, source_fingerprint: str | None = None) -> dict[str, Any]:
     from .adaptive_silence import analyze_audio
     return analyze_audio(source, frame_rate=frame_rate, ffmpeg=ffmpeg, threshold_db=threshold_db,
                          settings=settings or SilenceSettings(minimum_seconds=minimum_seconds),
-                         duration_seconds=duration_seconds, supervisor=supervisor)
+                         duration_seconds=duration_seconds, supervisor=supervisor,
+                         source_fingerprint=source_fingerprint)
 
 
 def apply_silence_removal(plan: dict[str, Any], *, asset_id: str, evidence: dict[str, Any],

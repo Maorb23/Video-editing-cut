@@ -17,7 +17,7 @@ from ..probe import fingerprint
 from ..plan import OP_FIELDS, OP_REQUIRED, OP_TYPES, validate_plan
 from .base import PlanResult, StructuredModel
 from .decisions import decision_schema, validate_decisions
-from ..silence_edits import apply_silence_decisions
+from ..silence_edits import apply_silence_decisions, requests_pause_edit, require_silence_preflight
 
 
 def _nullable(schema: dict[str, Any], required: bool) -> dict[str, Any]:
@@ -230,6 +230,8 @@ class EditPlanner:
              allow_unsupported: bool = False, dereverb: dict[str, Any] | None = None) -> PlanResult:
         if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 20_000:
             raise VideoEditingError("instruction must contain 1 to 20,000 characters", code="invalid_instruction")
+        if requests_pause_edit(instruction, previous_plan):
+            require_silence_preflight(analysis)
         facts = deepcopy(analysis.data)
         requires_dereverb = wants_dereverb(instruction) or any(
             op.get("type") == "dereverb" and op.get("enabled", True)

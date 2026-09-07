@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .analysis import AnalysisProvider, FrameAnalysisProvider
+from .adaptive_silence import SilenceSettings
 from .audio import prepare_dereverb
 from .artifacts import artifact_record, validate_compiled_mlt, validate_rendered_video
 from .errors import VideoEditingError
@@ -45,6 +46,7 @@ def run_pipeline(
     melt: str | None = None,
     frame_rate: Fraction = Fraction(30, 1),
     max_analysis_frames: int = 12,
+    silence_settings: SilenceSettings | None = None,
     max_repair_attempts: int = 2,
     process_timeout: float = 7200.0,
     no_progress_timeout: float = 180.0,
@@ -76,7 +78,10 @@ def run_pipeline(
                                     timeout=process_timeout, max_diagnostic_bytes=max_diagnostic_bytes)
 
         stage = "analysis"
-        selected_analyzer = analyzer or FrameAnalysisProvider(frame_rate=frame_rate, max_samples=max_analysis_frames)
+        configured_silence = silence_settings or SilenceSettings()
+        selected_analyzer = analyzer or FrameAnalysisProvider(
+            frame_rate=frame_rate, max_samples=max_analysis_frames, silence_settings=configured_silence,
+        )
         analysis = selected_analyzer.analyze(source, workspace, selected_tools, supervisor)
 
         stage = "planning"

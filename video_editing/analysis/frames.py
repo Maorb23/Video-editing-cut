@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -71,7 +72,7 @@ class FrameAnalysisProvider:
     MAX_PROXY_WIDTH = 1280
 
     def __init__(self, *, frame_rate: Fraction | None = None, max_samples: int = 12, proxy_width: int = 640,
-                 silence_settings: SilenceSettings | None = None) -> None:
+                 silence_settings: SilenceSettings) -> None:
         if (frame_rate is not None and frame_rate <= 0) or not 1 <= max_samples <= self.MAX_SAMPLES or not 1 <= proxy_width <= self.MAX_PROXY_WIDTH:
             raise ValueError(
                 f"analysis settings require a positive frame rate, 1-{self.MAX_SAMPLES} samples, "
@@ -80,7 +81,7 @@ class FrameAnalysisProvider:
         self.frame_rate = frame_rate
         self.max_samples = max_samples
         self.proxy_width = proxy_width
-        self.silence_settings = silence_settings or SilenceSettings()
+        self.silence_settings = silence_settings
 
     @property
     def version(self) -> str:
@@ -151,6 +152,7 @@ class FrameAnalysisProvider:
         data = {
             "version": "1.0",
             "provider": self.version,
+            "analysis_configuration": {"silence": asdict(self.silence_settings)},
             "timeline_policy": {
                 "name": "cfr_analysis_proxy",
                 "frame_rate": {"numerator": frame_rate.numerator, "denominator": frame_rate.denominator},
@@ -174,8 +176,8 @@ class FrameAnalysisProvider:
         if media.get("audio") is not None:
             silence = detect_silence(source, frame_rate=frame_rate, ffmpeg=str(toolchain.ffmpeg),
                                      settings=self.silence_settings, duration_seconds=duration_seconds,
-                                     supervisor=supervisor)
-            silence.update(asset_id='source', source_fingerprint=media['fingerprint'])
+                                     supervisor=supervisor, source_fingerprint=media['fingerprint'])
+            silence.update(asset_id='source')
             silence_path = workspace.write_json("analysis/silence.json", silence)
             from ..silence_edits import silence_review_markdown
             review_path = workspace.path('analysis/detected-silences.md')
@@ -183,5 +185,11 @@ class FrameAnalysisProvider:
                 stream.write(silence_review_markdown(silence, frame_rate))
             data["audio_evidence"] = {"silence": silence,
                                       "evidence_id": silence_path.relative_to(workspace.root).as_posix()}
+            data.setdefault("preflight", {})["silence"] = {
+                "status": "complete",
+                "evidence_id": silence_path.relative_to(workspace.root).as_posix(),
+                "minimum_silence_seconds": self.silence_settings.minimum_silence_seconds,
+                "analyzed_duration_seconds": silence["analyzed_duration_seconds"],
+            }
         path = workspace.write_json("analysis/analysis.json", data)
         return AnalysisArtifact(data, path, extracted)

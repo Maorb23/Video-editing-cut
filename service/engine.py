@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from video_editing.analysis import AnalysisProvider, FrameAnalysisProvider
 from video_editing.analysis.frames import source_frame_rate
+from video_editing.adaptive_silence import SilenceSettings
 from video_editing.audio import prepare_dereverb
 from video_editing.artifacts import artifact_record, validate_compiled_mlt, validate_rendered_video
 from video_editing.errors import VideoEditingError
@@ -58,6 +59,7 @@ def prepare_edit(
     previous_plan: dict[str, Any] | None = None,
     original_instruction: str | None = None,
     max_analysis_frames: int = 12,
+    silence_settings: SilenceSettings | None = None,
     max_repair_attempts: int = 2,
     process_timeout: float = 7200.0,
     no_progress_timeout: float = 180.0,
@@ -87,7 +89,10 @@ def prepare_edit(
         dereverb = prepare_dereverb(instruction, source, workspace, tools, previous_plan=previous_plan, progress=progress,
                                     timeout=process_timeout, max_diagnostic_bytes=max_diagnostic_bytes)
         stage = "analysis"
-        selected_analyzer = analyzer or FrameAnalysisProvider(frame_rate=frame_rate, max_samples=max_analysis_frames)
+        configured_silence = silence_settings or SilenceSettings()
+        selected_analyzer = analyzer or FrameAnalysisProvider(
+            frame_rate=frame_rate, max_samples=max_analysis_frames, silence_settings=configured_silence,
+        )
         analysis = selected_analyzer.analyze(source, workspace, tools, supervisor)
         if frame_rate is None:
             source_rate = source_frame_rate(analysis.data["source"]["video"])

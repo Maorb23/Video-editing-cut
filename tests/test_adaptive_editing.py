@@ -1,5 +1,7 @@
 from copy import deepcopy
+from dataclasses import asdict
 from fractions import Fraction
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,10 +18,16 @@ from video_editing.plan import validate_plan
 from video_editing.render import render
 from video_editing.planning import EditPlanner
 from video_editing.silence import parse_silence_output
-from video_editing.silence_edits import apply_silence_decisions, silence_review_markdown
+from video_editing.silence_edits import (PREFLIGHT_REQUIRED_MESSAGE, apply_silence_decisions,
+                                         require_silence_preflight, silence_review_markdown)
 
 
 class AdaptiveSilenceTests(unittest.TestCase):
+    def test_phone_video_defaults(self):
+        settings = SilenceSettings()
+        self.assertEqual(settings.minimum_silence_seconds,.25)
+        self.assertEqual(settings.speech_padding_seconds,.12)
+
     def test_noise_calibration_and_clamping(self):
         for floor, expected in [(-58,-50),(-42,-34),(-85,-60),(-30,-30)]:
             with self.subTest(floor=floor):
@@ -119,9 +127,42 @@ class TypedEditingTests(unittest.TestCase):
         self.assertTrue(all('2=-6.0206' in value for value in levels),levels)
 
     def evidence(self):
-        candidate = {'id':'pause','start_frame':60,'end_frame':90,'confidence':.9,'threshold_db':-42,'context':{},'evidence_id':'analysis/silence.json#pause'}
+        settings = SilenceSettings()
+        fingerprint = self.plan['assets'][0]['fingerprint']
+        candidate = {'id':'pause','candidate_id':'pause','start_frame':60,'end_frame':90,
+            'duration_frames':30,'duration_seconds':'1','confidence':.9,'threshold_db':-42,
+            'source_fingerprint':fingerprint,
+            'contextual_evidence':{'status':'unavailable','confidence':0.,'evidence_ids':[]},
+            'evidence_id':'analysis/silence.json#pause'}
         candidate['suggestion'] = silence_policy(candidate,Fraction(30))
-        return {'asset_id':'a','frame_rate':self.plan['profile']['frame_rate'],'intervals':[candidate], 'settings':{'threshold_db':-42}}
+        return {'version':'1.0','status':'complete','asset_id':'a','source_fingerprint':fingerprint,
+            'frame_rate':self.plan['profile']['frame_rate'],'analyzed_duration_seconds':'10',
+            'analyzed_duration_frames':300,'intervals':[candidate],
+            'settings':{**asdict(settings),'threshold_db':-42,'selected_threshold_db':-42},
+            'detector':{'name':'ffmpeg.silencedetect','scope':'full_source','threshold_db':-42,
+                        'minimum_silence_seconds':settings.minimum_silence_seconds},
+            'calibration':{'confidence':.9},'evidence_id':'analysis/silence.json'}
+
+    def attach_preflight(self, analysis, evidence):
+        evidence = deepcopy(evidence)
+        evidence['asset_id'] = 'source'
+        evidence['source_fingerprint'] = analysis.data['source']['fingerprint']
+        evidence['analyzed_duration_seconds'] = str(Fraction(analysis.data['source']['duration_frames'],30))
+        evidence['analyzed_duration_frames'] = analysis.data['source']['duration_frames']
+        for candidate in evidence['intervals']:
+            candidate['source_fingerprint'] = evidence['source_fingerprint']
+        settings = {key:value for key,value in evidence['settings'].items() if key in SilenceSettings.__dataclass_fields__}
+        analysis.data['source']['duration_seconds'] = evidence['analyzed_duration_seconds']
+        analysis.data['source']['audio'] = {'sample_rate':48000,'channels':2}
+        analysis.data['analysis_configuration'] = {'silence':settings}
+        analysis.data['audio_evidence'] = {'silence':evidence,'evidence_id':'analysis/silence.json'}
+        analysis.data['preflight'] = {'silence':{'status':'complete','evidence_id':'analysis/silence.json',
+            'minimum_silence_seconds':settings['minimum_silence_seconds'],
+            'analyzed_duration_seconds':evidence['analyzed_duration_seconds']}}
+        evidence_path = analysis.path.parent/'analysis'/'silence.json'
+        evidence_path.parent.mkdir(exist_ok=True)
+        evidence_path.write_text(json.dumps(evidence),encoding='utf-8')
+        return evidence
 
     def test_policy_ripple_preserves_tracks_and_effects(self):
         self.plan['tracks'][0]['clips'][0]['duration'] = 240
@@ -164,9 +205,7 @@ class TypedEditingTests(unittest.TestCase):
 
     def test_unsafe_policy_choice_gets_bounded_repair(self):
         analysis = test_planning.PlanningTests().analysis(self.root,self.media,duration=240)
-        evidence = self.evidence()
-        evidence['asset_id'] = 'source'
-        analysis.data['audio_evidence'] = {'silence':evidence,'evidence_id':'analysis/silence.json'}
+        evidence = self.attach_preflight(analysis,self.evidence())
         bad = draft(duration=240)
         bad['silence_decisions'] = [{'asset_id':'source','candidate_id':'pause','action':'remove'}]
         good = deepcopy(bad)
@@ -177,9 +216,7 @@ class TypedEditingTests(unittest.TestCase):
 
     def test_planner_uses_persisted_policy_then_resolves_tail(self):
         analysis = test_planning.PlanningTests().analysis(self.root,self.media,duration=240)
-        evidence = self.evidence()
-        evidence['asset_id'] = 'source'
-        analysis.data['audio_evidence'] = {'silence':evidence,'evidence_id':'analysis/silence.json'}
+        evidence = self.attach_preflight(analysis,self.evidence())
         response = draft(duration=240,operations=[{'id':'blue','type':'color_grade','tail_seconds':5,'tint':'#0000ff','tint_strength':.75}])
         response['silence_decisions'] = [{'asset_id':'source','candidate_id':'pause','action':'shorten'}]
         result = EditPlanner(FakeModel([response])).plan('Remove long pauses and make the last 5 seconds blue',analysis,plan_path=self.root/'plan.json',source_relative=self.media.name)
@@ -188,10 +225,34 @@ class TypedEditingTests(unittest.TestCase):
         self.assertEqual(result.plan.data['analysis']['silence_decisions'][0]['action'],'shorten')
         self.assertEqual(result.decision_log['decisions'][-1]['operation'],'pause: shorten (synchronized)')
 
+    def test_preflight_rejects_missing_stale_partial_and_mismatched_evidence(self):
+        analysis = test_planning.PlanningTests().analysis(self.root,self.media,duration=240)
+        evidence = self.attach_preflight(analysis,self.evidence())
+        self.assertIs(require_silence_preflight(analysis),evidence)
+        cases = {
+            'missing': lambda data: data.pop('audio_evidence'),
+            'stale': lambda data: data['audio_evidence']['silence'].__setitem__('source_fingerprint','sha256:stale'),
+            'partial': lambda data: data['audio_evidence']['silence'].__setitem__('status','partial'),
+            'minimum': lambda data: data['analysis_configuration']['silence'].__setitem__('minimum_silence_seconds',.5),
+        }
+        for name, mutate in cases.items():
+            broken = deepcopy(analysis.data)
+            mutate(broken)
+            with self.subTest(name=name),self.assertRaisesRegex(VideoEditingError,PREFLIGHT_REQUIRED_MESSAGE):
+                require_silence_preflight(broken,evidence_path=self.root/'analysis'/'silence.json')
+
+    def test_pause_planning_is_blocked_before_model_call_without_preflight(self):
+        analysis = test_planning.PlanningTests().analysis(self.root,self.media,duration=240)
+        model = FakeModel([draft(duration=240)])
+        with self.assertRaisesRegex(VideoEditingError,PREFLIGHT_REQUIRED_MESSAGE):
+            EditPlanner(model).plan('Remove pauses',analysis,plan_path=self.root/'plan.json',
+                                    source_relative=self.media.name)
+        self.assertEqual(model.calls,[])
+
     def test_policy_l_cut_requires_context_and_handles(self):
         self.plan['tracks'][0]['clips'][0]['duration'] = 200
         evidence = self.evidence()
-        evidence['intervals'][0]['context'] = {'confidence':.95,'evidence_ids':['video:60'],
+        evidence['intervals'][0]['contextual_evidence'] = {'confidence':.95,'evidence_ids':['video:60'],
             'emphasis_score':'low','lips_visible_near_cut':False,'visual_discontinuity':'low',
             'room_tone_difference':'low','l_cut_safe':True}
         result = apply_silence_decisions(self.plan,evidence,[{'candidate_id':'pause','asset_id':'a','action':'shorten'}])

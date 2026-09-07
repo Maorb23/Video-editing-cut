@@ -9,6 +9,7 @@ from tests.helpers import valid_plan
 from tests import test_planning as planning_fixtures
 from tests.test_planning import FakeModel, draft
 from video_editing.analysis import FrameAnalysisProvider
+from video_editing.adaptive_silence import SilenceSettings
 from video_editing.artifacts import validate_compiled_mlt
 from video_editing.errors import PlanValidationError, VideoEditingError
 from video_editing.filters import FILTERS
@@ -36,7 +37,7 @@ def test_revision_context_and_rational_rate_are_preserved(tmp_path):
     assert context["original_instruction"] == "Brighten"
     assert result.plan.profile["frame_rate"] == {"numerator": 30000, "denominator": 1001}
     assert result.decision_log["unsupported"] == revised["unsupported"]
-    assert FrameAnalysisProvider().frame_rate is None
+    assert FrameAnalysisProvider(silence_settings=SilenceSettings()).frame_rate is None
 
 
 def test_public_logs_reject_unknown_evidence_private_fields_and_invalid_confidence():

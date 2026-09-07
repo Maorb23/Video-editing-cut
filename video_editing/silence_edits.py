@@ -1,10 +1,95 @@
 """Resolve typed pause decisions into synchronized, frame-exact timeline edits."""
+import json
+import re
 from copy import deepcopy
 from fractions import Fraction
+from pathlib import Path
 
 from .adaptive_silence import SilenceSettings, silence_policy
 from .errors import VideoEditingError
 from .operations import STRUCTURAL, resolve_timeline
+
+
+PREFLIGHT_REQUIRED_MESSAGE = (
+    'Preflight must be rerun with the requested settings before a pause-edit plan can be created.'
+)
+
+
+def requests_pause_edit(instruction: str, previous_plan: dict | None = None) -> bool:
+    """Recognize pause-edit intent without asking the runtime model to infer preflight state."""
+    requested = bool(re.search(
+        r'\b(silence|silences|silent|pause|pauses|dead[ -]?air)\b', instruction, re.IGNORECASE,
+    ))
+    prior = (previous_plan or {}).get('analysis', {}).get('silence_decisions', [])
+    return requested or bool(prior)
+
+
+def require_silence_preflight(analysis, *, evidence_path: Path | None = None) -> dict:
+    """Reject missing, stale, partial, or differently configured pause evidence."""
+    def fail() -> None:
+        raise VideoEditingError(PREFLIGHT_REQUIRED_MESSAGE, code='silence_preflight_required')
+
+    data = getattr(analysis, 'data', analysis)
+    if not isinstance(data, dict):
+        fail()
+    source = data.get('source', {})
+    rate_data = data.get('timeline_policy', {}).get('frame_rate')
+    configured = data.get('analysis_configuration', {}).get('silence', {})
+    preflight = data.get('preflight', {}).get('silence', {})
+    audio_evidence = data.get('audio_evidence', {})
+    evidence = audio_evidence.get('silence') if isinstance(audio_evidence, dict) else None
+    if not all(isinstance(value, dict) for value in (source, rate_data, configured, preflight, evidence)):
+        fail()
+    try:
+        rate = Fraction(rate_data['numerator'], rate_data['denominator'])
+        source_duration = Fraction(source['duration_seconds'])
+        analyzed_duration = Fraction(evidence['analyzed_duration_seconds'])
+        expected_frames = round(source_duration * rate)
+        minimum = configured['minimum_silence_seconds']
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        fail()
+    if (preflight.get('status') != 'complete' or evidence.get('status') != 'complete'
+            or evidence.get('source_fingerprint') != source.get('fingerprint')
+            or evidence.get('frame_rate') != rate_data
+            or analyzed_duration != source_duration
+            or evidence.get('analyzed_duration_frames') != expected_frames
+            or evidence.get('settings', {}).get('minimum_silence_seconds') != minimum
+            or evidence.get('detector', {}).get('minimum_silence_seconds') != minimum
+            or evidence.get('detector', {}).get('scope') != 'full_source'
+            or preflight.get('minimum_silence_seconds') != minimum
+            or preflight.get('analyzed_duration_seconds') != evidence.get('analyzed_duration_seconds')):
+        fail()
+    intervals = evidence.get('intervals')
+    if not isinstance(intervals, list):
+        fail()
+    seen: set[str] = set()
+    for candidate in intervals:
+        if not isinstance(candidate, dict):
+            fail()
+        identifier = candidate.get('candidate_id')
+        start, end = candidate.get('start_frame'), candidate.get('end_frame')
+        if (not isinstance(identifier, str) or not identifier or identifier in seen
+                or candidate.get('id') != identifier or type(start) is not int or type(end) is not int
+                or not 0 <= start < end <= expected_frames
+                or candidate.get('duration_frames') != end - start
+                or candidate.get('source_fingerprint') != source.get('fingerprint')
+                or not isinstance(candidate.get('contextual_evidence'), dict)):
+            fail()
+        seen.add(identifier)
+    relative = audio_evidence.get('evidence_id')
+    if not isinstance(relative, str) or relative != preflight.get('evidence_id'):
+        fail()
+    if evidence_path is None and hasattr(analysis, 'path'):
+        root = analysis.path.parent.parent if analysis.path.parent.name == 'analysis' else analysis.path.parent
+        evidence_path = root / Path(relative)
+    if evidence_path is not None:
+        try:
+            persisted = json.loads(evidence_path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            fail()
+        if persisted != evidence:
+            fail()
+    return evidence
 
 
 def apply_silence_decisions(plan: dict, evidence: dict, decisions: list[dict]) -> dict:
@@ -118,8 +203,9 @@ def apply_silence_decisions(plan: dict, evidence: dict, decisions: list[dict]) -
                         or second['source_in'] != decision['source_remove_end']): continue
                 boundary = second['timeline_start']
                 identifier = f"pause_join_{first['id']}_{second['id']}"
-                safety = {**candidate['context'], 'id':identifier, 'from_clip_id':first['id'], 'to_clip_id':second['id'],
-                          'picture_boundary_frame':boundary, 'source_evidence_ids':candidate['context']['evidence_ids']}
+                context = candidate.get('contextual_evidence', candidate.get('context', {}))
+                safety = {**context, 'id':identifier, 'from_clip_id':first['id'], 'to_clip_id':second['id'],
+                          'picture_boundary_frame':boundary, 'source_evidence_ids':context['evidence_ids']}
                 output['analysis'].setdefault('transition_safety',[]).append(safety)
                 op = {'id':identifier,'type':'audio_transition','kind':requested_transition,
                       'from_clip_id':first['id'],'to_clip_id':second['id'],'picture_boundary_frame':boundary,
@@ -146,6 +232,6 @@ def silence_review_markdown(evidence: dict, rate: Fraction) -> str:
         lines.extend([f"- {stamp(item['start_frame'])}–{stamp(item['end_frame'])} — {float(Fraction(item['end_frame']-item['start_frame'],1)/rate):.2f} s",
             f"  - threshold: {item.get('threshold_db',evidence.get('settings',{}).get('threshold_db'))} dBFS",
             f"  - calibration confidence: {item.get('confidence',0):.0%}",
-            f"  - context: {item.get('context') or 'unavailable'}", f"  - suggested action: {suggestion['action']}"])
+            f"  - context: {item.get('contextual_evidence', item.get('context')) or 'unavailable'}", f"  - suggested action: {suggestion['action']}"])
     if not evidence.get('intervals'): lines.append('No candidate pauses met the detection criteria.')
     return '\n'.join(lines)+'\n'

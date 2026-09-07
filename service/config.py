@@ -17,6 +17,12 @@ class Settings:
     ffmpeg: str | None = None
     ffprobe: str | None = None
     melt: str | None = None
+    minimum_silence_seconds: float = .25
+    speech_padding_seconds: float = .12
+    silence_threshold_min_db: float = -60.
+    silence_threshold_max_db: float = -30.
+    silence_calibration_margin_db: float = 8.
+    silence_fallback_threshold_db: float = -50.
     max_upload_bytes: int = 2 * 1024 * 1024 * 1024
     worker_lease_seconds: int = 300
     worker_max_attempts: int = 3
@@ -51,6 +57,12 @@ class Settings:
             ffmpeg=os.environ.get("VIDEO_EDIT_FFMPEG"),
             ffprobe=os.environ.get("VIDEO_EDIT_FFPROBE"),
             melt=os.environ.get("VIDEO_EDIT_MELT"),
+            minimum_silence_seconds=float(os.environ.get("VIDEO_EDIT_MINIMUM_SILENCE_SECONDS", ".25")),
+            speech_padding_seconds=float(os.environ.get("VIDEO_EDIT_SPEECH_PADDING_SECONDS", ".12")),
+            silence_threshold_min_db=float(os.environ.get("VIDEO_EDIT_SILENCE_THRESHOLD_MIN_DB", "-60")),
+            silence_threshold_max_db=float(os.environ.get("VIDEO_EDIT_SILENCE_THRESHOLD_MAX_DB", "-30")),
+            silence_calibration_margin_db=float(os.environ.get("VIDEO_EDIT_SILENCE_CALIBRATION_MARGIN_DB", "8")),
+            silence_fallback_threshold_db=float(os.environ.get("VIDEO_EDIT_SILENCE_FALLBACK_THRESHOLD_DB", "-50")),
             max_upload_bytes=int(os.environ.get("VIDEO_EDIT_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024))),
             worker_lease_seconds=int(os.environ.get("VIDEO_EDIT_WORKER_LEASE_SECONDS", "300")),
             worker_max_attempts=int(os.environ.get("VIDEO_EDIT_WORKER_MAX_ATTEMPTS", "3")),
@@ -68,6 +80,16 @@ class Settings:
         )
 
     def validate(self) -> None:
+        from video_editing.adaptive_silence import SilenceSettings
+
+        SilenceSettings(
+            minimum_silence_seconds=self.minimum_silence_seconds,
+            speech_padding_seconds=self.speech_padding_seconds,
+            threshold_min_db=self.silence_threshold_min_db,
+            threshold_max_db=self.silence_threshold_max_db,
+            calibration_margin_db=self.silence_calibration_margin_db,
+            fallback_threshold_db=self.silence_fallback_threshold_db,
+        )
         if not self.database_url:
             raise ValueError("VIDEO_EDIT_DATABASE_URL is required")
         if self.max_upload_bytes < 1:

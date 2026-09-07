@@ -21,6 +21,7 @@ from video_editing.inspect import inspect
 from video_editing.errors import VideoEditingError
 from video_editing.workspace import JobWorkspace
 from video_editing.audio import dereverb_preflight
+from video_editing.adaptive_silence import SilenceSettings
 from video_editing.supervisor import Toolchain
 
 from .config import Settings
@@ -137,6 +138,14 @@ class Worker:
             original = self.repository.get_plan(job.edit_id, 1)["instruction"] if parent else job.instruction
             prepared = prepare_edit(source, job.instruction, workspace, toolchain=self._toolchain(),
                                     previous_plan=parent["document"] if parent else None, original_instruction=original,
+                                    silence_settings=SilenceSettings(
+                                        minimum_silence_seconds=self.settings.minimum_silence_seconds,
+                                        speech_padding_seconds=self.settings.speech_padding_seconds,
+                                        threshold_min_db=self.settings.silence_threshold_min_db,
+                                        threshold_max_db=self.settings.silence_threshold_max_db,
+                                        calibration_margin_db=self.settings.silence_calibration_margin_db,
+                                        fallback_threshold_db=self.settings.silence_fallback_threshold_db,
+                                    ),
                                     progress=lambda message: self.repository.update_plan_progress(job, message))
             document = read_json(prepared.edit_plan)
             decisions = read_json(workspace / "decisions.json")

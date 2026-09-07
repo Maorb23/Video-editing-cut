@@ -9,6 +9,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from video_editing.analysis import FrameAnalysisProvider, project_duration_frames, sample_project_frames
+from video_editing.adaptive_silence import SilenceSettings
 from video_editing.artifacts import validate_compiled_mlt, validate_rendered_video
 from video_editing.errors import PlanValidationError, VideoEditingError
 from video_editing.mlt import write_mlt
@@ -86,7 +87,7 @@ class PhaseZeroRegressionTests(unittest.TestCase):
         self.assertGreater(fixture["failed_source_frame"], fixture["source_decoded_frames"] - 1)
         self.assertEqual(project_duration_frames("51/50", Fraction(30, 1)), 31)
         with self.assertRaises(ValueError):
-            FrameAnalysisProvider(max_samples=FrameAnalysisProvider.MAX_SAMPLES + 1)
+            FrameAnalysisProvider(max_samples=FrameAnalysisProvider.MAX_SAMPLES + 1, silence_settings=SilenceSettings())
 
     def test_vfr_input_is_sampled_from_its_cfr_proxy(self) -> None:
         ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
@@ -105,7 +106,8 @@ class PhaseZeroRegressionTests(unittest.TestCase):
             workspace = JobWorkspace.create(root / "job")
             copied = workspace.import_media(source)
             tools = Toolchain(Path(ffmpeg).resolve(), Path(ffprobe).resolve(), Path(ffmpeg).resolve())
-            analysis = FrameAnalysisProvider(frame_rate=Fraction(30, 1), max_samples=6).analyze(
+            analysis = FrameAnalysisProvider(frame_rate=Fraction(30, 1), max_samples=6,
+                                             silence_settings=SilenceSettings()).analyze(
                 copied, workspace, tools, ProcessSupervisor(ProcessLimits(wall_timeout=20, no_progress_timeout=5)),
             )
             observed = [item["project_frame"] for item in analysis.data["observations"]]
@@ -138,7 +140,8 @@ class PhaseZeroRegressionTests(unittest.TestCase):
             copied = workspace.import_media(source)
             tools = Toolchain(Path(ffmpeg).resolve(), Path(ffprobe).resolve(), Path(ffmpeg).resolve())
             rate = Fraction(30000, 1001)
-            analysis = FrameAnalysisProvider(frame_rate=rate, max_samples=12).analyze(
+            analysis = FrameAnalysisProvider(frame_rate=rate, max_samples=12,
+                                             silence_settings=SilenceSettings()).analyze(
                 copied, workspace, tools, ProcessSupervisor(ProcessLimits(wall_timeout=20, no_progress_timeout=5)),
             )
             proxy = workspace.root / analysis.data["proxy"]
@@ -154,6 +157,44 @@ class PhaseZeroRegressionTests(unittest.TestCase):
             self.assertEqual(analysis.data["source"]["duration_frames"], decoded_frames)
             self.assertEqual(observed[-1], decoded_frames - 1)
             self.assertEqual(len(analysis.frame_paths), len(observed))
+            silence = json.loads((workspace.root / "analysis" / "silence.json").read_text(encoding="utf-8"))
+            self.assertEqual(Fraction(silence["analyzed_duration_seconds"]), Fraction(source_probe["format"]["duration"]))
+            self.assertEqual(silence["detector"]["scope"], "full_source")
+            self.assertEqual(silence["frame_rate"], {"numerator": 30000, "denominator": 1001})
+
+    def test_phone_room_tone_detects_and_persists_quarter_second_pause(self) -> None:
+        ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
+        if not ffmpeg or not ffprobe:
+            self.skipTest("FFmpeg tools unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "phone-like.mp4"
+            run_checked([
+                ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=duration=1.5:size=64x64:rate=30",
+                "-f", "lavfi", "-i", "sine=frequency=500:duration=0.55:sample_rate=48000",
+                "-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.001:duration=0.35:sample_rate=48000",
+                "-f", "lavfi", "-i", "sine=frequency=700:duration=0.60:sample_rate=48000",
+                "-filter_complex", "[1:a][2:a][3:a]concat=n=3:v=0:a=1[a]", "-map", "0:v:0", "-map", "[a]",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(source),
+            ])
+            workspace = JobWorkspace.create(root / "job")
+            copied = workspace.import_media(source)
+            tools = Toolchain(Path(ffmpeg).resolve(), Path(ffprobe).resolve(), Path(ffmpeg).resolve())
+            settings = SilenceSettings(minimum_silence_seconds=.25, speech_padding_seconds=.12)
+            analysis = FrameAnalysisProvider(frame_rate=Fraction(30), max_samples=4,
+                                             silence_settings=settings).analyze(
+                copied, workspace, tools, ProcessSupervisor(ProcessLimits(wall_timeout=20, no_progress_timeout=5)),
+            )
+            silence_path = workspace.root / "analysis" / "silence.json"
+            review_path = workspace.root / "analysis" / "detected-silences.md"
+            evidence = json.loads(silence_path.read_text(encoding="utf-8"))
+            self.assertTrue(evidence["intervals"])
+            candidate = evidence["intervals"][0]
+            self.assertGreaterEqual(candidate["duration_frames"], 8)
+            self.assertEqual(candidate["candidate_id"], candidate["id"])
+            self.assertEqual(candidate["source_fingerprint"], analysis.data["source"]["fingerprint"])
+            self.assertEqual(evidence["settings"]["minimum_silence_seconds"], .25)
+            self.assertIn("## Detected silences", review_path.read_text(encoding="utf-8"))
 
     def test_entirely_black_output_is_rejected(self) -> None:
         ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")

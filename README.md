@@ -108,6 +108,14 @@ export VIDEO_EDIT_MELT="$(command -v melt)"
 export VIDEO_EDIT_MAX_UPLOAD_BYTES=$((2 * 1024 * 1024 * 1024))
 export VIDEO_EDIT_WORKER_LEASE_SECONDS=300
 export VIDEO_EDIT_WORKER_MAX_ATTEMPTS=3
+# Phone-video silence preflight defaults. The fallback applies when calibrated
+# RMS room-tone separation is not reliable enough to select a threshold.
+export VIDEO_EDIT_MINIMUM_SILENCE_SECONDS=0.25
+export VIDEO_EDIT_SPEECH_PADDING_SECONDS=0.12
+export VIDEO_EDIT_SILENCE_THRESHOLD_MIN_DB=-60
+export VIDEO_EDIT_SILENCE_THRESHOLD_MAX_DB=-30
+export VIDEO_EDIT_SILENCE_CALIBRATION_MARGIN_DB=8
+export VIDEO_EDIT_SILENCE_FALLBACK_THRESHOLD_DB=-50
 # Local HTTP keeps this false. Set it to true in HTTPS deployments.
 export VIDEO_EDIT_SESSION_COOKIE_SECURE=false
 # Required in deployed environments; keep it stable so sessions remain valid.

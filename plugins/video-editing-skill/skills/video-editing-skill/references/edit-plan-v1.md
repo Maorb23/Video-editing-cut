@@ -72,11 +72,14 @@ references an immutable derived audio asset, the exact `deepfilternet3-local`
 model name, and a SHA-256 model fingerprint; it never means noise reduction.
 
 Silence calibration uses 50 ms RMS windows, the median of the lowest 20%, and
-an 8 dB margin clamped to −60…−30 dBFS. Insufficient support or separation falls
-back to −50 dBFS. `SilenceSettings` configures these bounds, the 0.5 second
-detection minimum, and 0.12 second speech padding. EOF closes at media duration.
+an 8 dB margin clamped to −60…−30 dBFS. Insufficient room-tone support or
+separation falls back to the documented −50 dBFS threshold. `SilenceSettings`
+configures these values, the phone-video default 0.25 second detection minimum,
+and 0.12 second speech padding. Analysis always covers the probed source duration;
+EOF closes at that duration.
 `analysis/silence.json` persists calibration, settings, frame-exact candidates,
-evidence IDs, and available context; `analysis/detected-silences.md` provides
+source fingerprints, analyzed duration/rate, evidence IDs, and available context;
+`analysis/detected-silences.md` provides
 the dedicated `## Detected silences` review section. No tiny window-level RMS
 regions are listed. Confidence means calibration confidence, not measured speech
 or lip-safety confidence.
@@ -91,6 +94,8 @@ Unreliable context uses synchronized timing. Actual choices and reasons persist
 in `analysis.silence_decisions` and the Decisions log, separately from detection.
 Pause edits intersecting keyframes, speed, or cleaned audio require a separate
 iteration and fail explicitly instead of silently changing those effects.
+Missing, stale, partial, or differently configured evidence blocks pause planning
+and requires preflight to be rerun before an iteration can be proposed.
 
 Export V1 is MP4, `libx264`, and AAC. Optional deterministic settings include
 video/audio bitrate, pixel format, and movflags; the standalone runner applies

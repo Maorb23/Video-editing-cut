@@ -183,8 +183,8 @@
       const threshold = pause.threshold_db ?? silence.settings?.threshold_db;
       details.textContent = `Threshold: ${threshold ?? "unavailable"} dBFS · Calibration confidence: ${Number.isFinite(pause.confidence) ? Math.round(pause.confidence * 100) + "%" : "unavailable"} · Suggested action: ${pause.suggestion?.action || "unavailable"}`;
       const context = document.createElement("p");
-      context.textContent = Object.entries(pause.context || {}).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(" · ") || "Speech and visual context: unavailable";
-      const evidence = document.createElement("code"); evidence.textContent = pause.evidence_id || pause.id;
+      context.textContent = Object.entries(pause.contextual_evidence || pause.context || {}).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(" · ") || "Speech and visual context: unavailable";
+      const evidence = document.createElement("code"); evidence.textContent = pause.evidence_id || pause.candidate_id || pause.id;
       item.append(title, details, context, evidence); silenceContainer.append(item);
     });
     renderDecisions(log.decisions);
