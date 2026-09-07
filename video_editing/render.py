@@ -59,6 +59,36 @@ def parse_progress(line: str) -> int | None:
     return min(100, int(match.group(1)))
 
 
+def verify_filter_services(project: Path, binary: str, runner: ProcessSupervisor) -> None:
+    """Require compiled filters to match an explicitly allow-listed runtime ABI."""
+    verified_services: set[tuple[str, tuple[str, ...]]] = set()
+    for node in ET.parse(project).getroot().findall('./producer/filter'):
+        pin = node.find("./property[@name='video-editing-skill:service-version']")
+        if pin is None:
+            continue
+        service = node.find("./property[@name='mlt_service']").text
+        compatible = node.find("./property[@name='video-editing-skill:compatible-service-abis']")
+        accepted = tuple(dict.fromkeys(
+            value for value in (compatible.text.split(',') if compatible is not None and compatible.text else [pin.text])
+            if value
+        ))
+        signature = (service, accepted)
+        if signature in verified_services:
+            continue
+        query = runner.run([binary, '-query', f'filter={service}'])
+        metadata = query.stdout + query.stderr
+        reported = re.findall(r'^\s*version:\s*(\S+)\s*$', metadata, re.MULTILINE)
+        if query.returncode or not any(
+            version.startswith(abi) for version in reported for abi in accepted
+        ):
+            actual = ', '.join(reported) if reported else 'unavailable'
+            raise VideoEditingError(
+                f'{service} requires compatible ABI {", ".join(accepted)}; reported {actual}',
+                code='unsupported_filter_version',
+            )
+        verified_services.add(signature)
+
+
 def render(
     project: Path,
     output: Path,
@@ -117,18 +147,7 @@ def render(
         cancellation,
     )
     # Fail before rendering instead of silently accepting an unavailable hue filter.
-    verified_services = set()
-    for node in ET.parse(project).getroot().findall('./producer/filter'):
-        pin = node.find("./property[@name='video-editing-skill:service-version']")
-        if pin is not None:
-            service = node.find("./property[@name='mlt_service']").text
-            if (service, pin.text) in verified_services:
-                continue
-            query = runner.run([binary, '-query', f'filter={service}'])
-            metadata = query.stdout + query.stderr
-            if query.returncode or f'version: {pin.text}' not in metadata:
-                raise VideoEditingError(f'{service} requires pinned {pin.text}', code='unsupported_filter_version')
-            verified_services.add((service, pin.text))
+    verify_filter_services(project, binary, runner)
     try:
         result = runner.run(
             arguments,

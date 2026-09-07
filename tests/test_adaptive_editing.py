@@ -16,7 +16,7 @@ from video_editing.audio_transitions import audio_routes
 from video_editing.errors import PlanValidationError, VideoEditingError
 from video_editing.mlt import compile_mlt
 from video_editing.plan import validate_plan
-from video_editing.render import render
+from video_editing.render import render, verify_filter_services
 from video_editing.planning import EditPlanner
 from video_editing.silence import parse_silence_output
 from video_editing.silence_edits import (PREFLIGHT_REQUIRED_MESSAGE, apply_silence_decisions,
@@ -205,11 +205,19 @@ class TypedEditingTests(unittest.TestCase):
         project = self.root/'pin.mlt'
         compile_mlt(validate_plan(self.plan,source=self.root/'plan.json'),project).write(project,encoding='utf-8')
         runner = Mock()
-        runner.run.return_value = Mock(returncode=0,stdout='version: Lavfi8.0\n',stderr='')
+        runner.run.return_value = Mock(returncode=0,stdout='version: Lavfi7.0\n',stderr='')
         with self.assertRaises(VideoEditingError) as caught:
             render(project,self.root/'out.mp4',melt='melt',supervisor=runner)
         self.assertEqual(caught.exception.code,'unsupported_filter_version')
         self.assertFalse((self.root/'out.mp4').exists())
+
+    def test_hue_pin_accepts_worker_lavfi_runtime(self):
+        self.plan['operations'] = [{'id':'hue','type':'color_grade','target':'c1','tint':'#ff9900','tint_strength':.75}]
+        project = self.root/'pin-compatible.mlt'
+        compile_mlt(validate_plan(self.plan,source=self.root/'plan.json'),project).write(project,encoding='utf-8')
+        runner = Mock()
+        runner.run.return_value = Mock(returncode=0,stdout='version: Lavfi8.44.100\n',stderr='')
+        verify_filter_services(project,'melt',runner)
 
     def test_unsafe_policy_choice_gets_bounded_repair(self):
         analysis = test_planning.PlanningTests().analysis(self.root,self.media,duration=240)

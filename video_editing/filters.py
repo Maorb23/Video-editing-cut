@@ -32,7 +32,11 @@ def _brightness(properties: dict[str, Any]) -> dict[str, str]:
 
 FILTER_CATALOG_VERSION = "mlt-7.28-shotcut-24.06"
 STRONG_HUE_SERVICE = 'avfilter.colorize'
-STRONG_HUE_SERVICE_VERSION = 'Lavfi11.14.102'
+# Debian/MLT worker images currently resolve Lavfi8 through Lavfi11. These ABI
+# generations expose the same colorize properties used below. Reject older and
+# future ABI generations until their compiled output has explicit coverage.
+STRONG_HUE_SERVICE_ABIS = ('Lavfi8', 'Lavfi9', 'Lavfi10', 'Lavfi11')
+STRONG_HUE_SERVICE_VERSION = STRONG_HUE_SERVICE_ABIS[-1]
 FILTERS: dict[str, FilterSpec] = {
     "brightness": FilterSpec("brightness", {"level": (int, float)}, _brightness),
     "contrast": FilterSpec("frei0r.contrast0r", {"contrast": (int, float)}, _identity),

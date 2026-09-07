@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from .errors import VideoEditingError
-from .filters import FILTERS, FILTER_CATALOG_VERSION, STRONG_HUE_SERVICE, STRONG_HUE_SERVICE_VERSION
+from .filters import (FILTERS, FILTER_CATALOG_VERSION, STRONG_HUE_SERVICE,
+                      STRONG_HUE_SERVICE_ABIS, STRONG_HUE_SERVICE_VERSION)
 from .operations import resolve_timeline
 from .plan import ValidatedPlan
 from .timebase import frames_to_mlt_time
@@ -190,6 +191,8 @@ def _add_filter(producer: ET.Element, operation: dict[str, Any], profile: dict[s
             hue, _, saturation = colorsys.rgb_to_hls(*rgb)
             _property(node, 'mlt_service', STRONG_HUE_SERVICE)
             _property(node, 'video-editing-skill:service-version', STRONG_HUE_SERVICE_VERSION)
+            _property(node, 'video-editing-skill:compatible-service-abis',
+                      ','.join(STRONG_HUE_SERVICE_ABIS))
             _property(node, 'av.hue', hue*360)
             _property(node, 'av.saturation', min(1., saturation*strength*max(0., operation.get('saturation', 1.))))
             _property(node, 'av.lightness', .5)
