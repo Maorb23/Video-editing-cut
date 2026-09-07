@@ -189,6 +189,7 @@ class FrameAnalysisProvider:
                 "status": "complete",
                 "evidence_id": silence_path.relative_to(workspace.root).as_posix(),
                 "minimum_silence_seconds": self.silence_settings.minimum_silence_seconds,
+                "speech_padding_seconds": self.silence_settings.speech_padding_seconds,
                 "analyzed_duration_seconds": silence["analyzed_duration_seconds"],
             }
         path = workspace.write_json("analysis/analysis.json", data)

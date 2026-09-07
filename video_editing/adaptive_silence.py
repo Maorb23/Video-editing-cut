@@ -12,6 +12,13 @@ from .errors import VideoEditingError
 from .supervisor import ProcessSupervisor
 
 
+_PADDING_VALUE = r'(?P<value>(?:\d+(?:\.\d+)?|\.\d+))\s*(?P<unit>milliseconds?|msecs?|ms|seconds?|secs?|s)'
+_PADDING_PATTERNS = (
+    re.compile(_PADDING_VALUE + r'\s+(?:of\s+)?(?:speech\s+)?padding\b', re.IGNORECASE),
+    re.compile(r'\b(?:speech\s+)?padding\s*(?:of|to|=|:)?\s*' + _PADDING_VALUE, re.IGNORECASE),
+)
+
+
 @dataclass(frozen=True, init=False)
 class SilenceSettings:
     window_seconds: float = .05
@@ -73,6 +80,45 @@ class SilenceSettings:
                 and -90 <= self.threshold_min_db <= self.fallback_threshold_db <= self.threshold_max_db <= -20
                 and .05 <= self.minimum_silence_seconds <= 10 and 0 <= self.speech_padding_seconds <= 1):
             raise ValueError('silence settings exceed supported bounds')
+
+
+def requested_speech_padding_seconds(instruction: str) -> float | None:
+    """Extract a duration only when the instruction explicitly ties it to padding."""
+    if not isinstance(instruction, str):
+        return None
+    values: set[Fraction] = set()
+    for pattern in _PADDING_PATTERNS:
+        for match in pattern.finditer(instruction):
+            value = Fraction(match.group('value'))
+            if match.group('unit').lower() in {'millisecond', 'milliseconds', 'msec', 'msecs', 'ms'}:
+                value /= 1000
+            values.add(value)
+    if not values:
+        return None
+    if len(values) != 1:
+        raise VideoEditingError('instruction contains conflicting speech padding values',
+                                code='invalid_silence_settings')
+    return float(values.pop())
+
+
+def silence_settings_for_instruction(
+    base: SilenceSettings,
+    instruction: str,
+    *,
+    inherited_padding_seconds: float | None = None,
+) -> SilenceSettings:
+    """Resolve instruction padding over inherited and deployment defaults."""
+    requested = requested_speech_padding_seconds(instruction)
+    padding = requested if requested is not None else (
+        inherited_padding_seconds if inherited_padding_seconds is not None else base.speech_padding_seconds
+    )
+    try:
+        return SilenceSettings(**{**asdict(base), 'speech_padding_seconds': padding})
+    except ValueError as exc:
+        raise VideoEditingError(
+            'speech padding must be between 0 and 1 second per side',
+            code='invalid_silence_settings',
+        ) from exc
 
 
 def calibrate_noise(windows: list[float], settings: SilenceSettings) -> dict:

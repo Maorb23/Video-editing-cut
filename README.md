@@ -127,6 +127,12 @@ video-edit-api
 video-edit-worker
 ```
 
+The deployment value is the default speech padding per side. A job instruction
+can override it explicitly, for example `preserve 0.2 seconds of padding` or
+`use 200 ms speech padding`; accepted values are 0 through 1 second per side.
+Pause-duration requests such as `remove pauses longer than 0.5 seconds` do not
+change the padding setting.
+
 `video-edit-migrate` applies both the service SQL migrations and Django's
 account/session migrations. Authentication uses Django's user model, password
 hashing, and database session store while preserving the `/v1/auth/*` API.

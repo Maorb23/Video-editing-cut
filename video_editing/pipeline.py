@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .analysis import AnalysisProvider, FrameAnalysisProvider
-from .adaptive_silence import SilenceSettings
+from .adaptive_silence import SilenceSettings, silence_settings_for_instruction
 from .audio import prepare_dereverb
 from .artifacts import artifact_record, validate_compiled_mlt, validate_rendered_video
 from .errors import VideoEditingError
@@ -78,7 +78,9 @@ def run_pipeline(
                                     timeout=process_timeout, max_diagnostic_bytes=max_diagnostic_bytes)
 
         stage = "analysis"
-        configured_silence = silence_settings or SilenceSettings()
+        configured_silence = silence_settings_for_instruction(
+            silence_settings or SilenceSettings(), instruction,
+        )
         selected_analyzer = analyzer or FrameAnalysisProvider(
             frame_rate=frame_rate, max_samples=max_analysis_frames, silence_settings=configured_silence,
         )

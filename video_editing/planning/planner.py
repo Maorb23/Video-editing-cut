@@ -193,6 +193,8 @@ class EditPlanner:
             "Dereverb must reference a preflighted immutable derived audio asset and the pinned deepfilternet3-local model; never substitute denoising. "
             "For pause removal emit silence_decisions referencing persisted candidate IDs and their policy actions; "
             "do not manually cut those pauses in tracks or operations. Python owns calibration, policy, padding, and timing. "
+            "When describing padding, use analysis.analysis_configuration.silence.speech_padding_seconds exactly; "
+            "that value is per side and is not the minimum pause-duration threshold. "
             "Never invent noise floors, speech boundaries, lip visibility or transition-safety evidence. "
             "Use synchronized cuts unless persisted transition_safety explicitly permits an L/J-cut. "
             "Decisions contain actual edit choices only; raw pauses appear separately in Detected silences. "

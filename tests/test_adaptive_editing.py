@@ -11,7 +11,8 @@ from tests.helpers import valid_plan
 from tests.test_planning import FakeModel, draft
 from tests import test_planning
 from video_editing.adaptive_silence import (SilenceSettings, calibrate_noise,
-                                            detect_quiet_intervals, silence_policy)
+                                            detect_quiet_intervals, requested_speech_padding_seconds,
+                                            silence_policy, silence_settings_for_instruction)
 from video_editing.audio_transitions import audio_routes
 from video_editing.errors import PlanValidationError, VideoEditingError
 from video_editing.mlt import compile_mlt
@@ -28,6 +29,33 @@ class AdaptiveSilenceTests(unittest.TestCase):
         settings = SilenceSettings()
         self.assertEqual(settings.minimum_silence_seconds,.25)
         self.assertEqual(settings.speech_padding_seconds,.12)
+
+    def test_instruction_padding_is_explicit_and_not_pause_duration(self):
+        instruction = ('Remove pauses longer than 0.5 seconds, keep natural speech rhythm, '
+                       'preserve 0.12 seconds of padding')
+        self.assertEqual(requested_speech_padding_seconds(instruction), .12)
+        self.assertEqual(silence_settings_for_instruction(SilenceSettings(), instruction).speech_padding_seconds, .12)
+        self.assertIsNone(requested_speech_padding_seconds('Remove pauses longer than 0.5 seconds'))
+        self.assertEqual(requested_speech_padding_seconds('use 500 ms speech padding'), .5)
+        self.assertEqual(requested_speech_padding_seconds('padding: .2 sec'), .2)
+
+    def test_instruction_padding_precedence_inheritance_and_bounds(self):
+        base = SilenceSettings(speech_padding_seconds=.12)
+        self.assertEqual(silence_settings_for_instruction(
+            base, 'make the final seconds red', inherited_padding_seconds=.4,
+        ).speech_padding_seconds, .4)
+        self.assertEqual(silence_settings_for_instruction(
+            base, 'change padding to 0.2 seconds', inherited_padding_seconds=.4,
+        ).speech_padding_seconds, .2)
+        for instruction in ('padding 0.2 seconds and padding 0.3 seconds', 'use 1.1 seconds of padding'):
+            with self.subTest(instruction=instruction), self.assertRaises(VideoEditingError):
+                silence_settings_for_instruction(base, instruction)
+
+    def test_configured_padding_controls_retained_pause_frames(self):
+        candidate = {'id':'pause','start_frame':0,'end_frame':60}
+        policy = silence_policy(candidate, Fraction(30), SilenceSettings(speech_padding_seconds=.5))
+        self.assertEqual(policy['action'], 'shorten')
+        self.assertEqual(policy['retained_frames'], 30)
 
     def test_noise_calibration_and_clamping(self):
         for floor, expected in [(-58,-50),(-42,-34),(-85,-60),(-30,-30)]:
@@ -166,6 +194,7 @@ class TypedEditingTests(unittest.TestCase):
         analysis.data['audio_evidence'] = {'silence':evidence,'evidence_id':'analysis/silence.json'}
         analysis.data['preflight'] = {'silence':{'status':'complete','evidence_id':'analysis/silence.json',
             'minimum_silence_seconds':settings['minimum_silence_seconds'],
+            'speech_padding_seconds':settings['speech_padding_seconds'],
             'analyzed_duration_seconds':evidence['analyzed_duration_seconds']}}
         evidence_path = analysis.path.parent/'analysis'/'silence.json'
         evidence_path.parent.mkdir(exist_ok=True)
@@ -250,6 +279,7 @@ class TypedEditingTests(unittest.TestCase):
             'stale': lambda data: data['audio_evidence']['silence'].__setitem__('source_fingerprint','sha256:stale'),
             'partial': lambda data: data['audio_evidence']['silence'].__setitem__('status','partial'),
             'minimum': lambda data: data['analysis_configuration']['silence'].__setitem__('minimum_silence_seconds',.5),
+            'padding': lambda data: data['analysis_configuration']['silence'].__setitem__('speech_padding_seconds',.5),
         }
         for name, mutate in cases.items():
             broken = deepcopy(analysis.data)

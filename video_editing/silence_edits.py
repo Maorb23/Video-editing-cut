@@ -46,6 +46,7 @@ def require_silence_preflight(analysis, *, evidence_path: Path | None = None) ->
         analyzed_duration = Fraction(evidence['analyzed_duration_seconds'])
         expected_frames = round(source_duration * rate)
         minimum = configured['minimum_silence_seconds']
+        padding = configured['speech_padding_seconds']
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         fail()
     if (preflight.get('status') != 'complete' or evidence.get('status') != 'complete'
@@ -54,9 +55,11 @@ def require_silence_preflight(analysis, *, evidence_path: Path | None = None) ->
             or analyzed_duration != source_duration
             or evidence.get('analyzed_duration_frames') != expected_frames
             or evidence.get('settings', {}).get('minimum_silence_seconds') != minimum
+            or evidence.get('settings', {}).get('speech_padding_seconds') != padding
             or evidence.get('detector', {}).get('minimum_silence_seconds') != minimum
             or evidence.get('detector', {}).get('scope') != 'full_source'
             or preflight.get('minimum_silence_seconds') != minimum
+            or preflight.get('speech_padding_seconds') != padding
             or preflight.get('analyzed_duration_seconds') != evidence.get('analyzed_duration_seconds')):
         fail()
     intervals = evidence.get('intervals')

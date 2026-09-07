@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from video_editing.analysis import AnalysisProvider, FrameAnalysisProvider
 from video_editing.analysis.frames import source_frame_rate
-from video_editing.adaptive_silence import SilenceSettings
+from video_editing.adaptive_silence import SilenceSettings, silence_settings_for_instruction
 from video_editing.audio import prepare_dereverb
 from video_editing.artifacts import artifact_record, validate_compiled_mlt, validate_rendered_video
 from video_editing.errors import VideoEditingError
@@ -89,7 +89,13 @@ def prepare_edit(
         dereverb = prepare_dereverb(instruction, source, workspace, tools, previous_plan=previous_plan, progress=progress,
                                     timeout=process_timeout, max_diagnostic_bytes=max_diagnostic_bytes)
         stage = "analysis"
-        configured_silence = silence_settings or SilenceSettings()
+        inherited_padding = (previous_plan or {}).get('analysis', {}).get('silence', {}).get(
+            'settings', {},
+        ).get('speech_padding_seconds')
+        configured_silence = silence_settings_for_instruction(
+            silence_settings or SilenceSettings(), instruction,
+            inherited_padding_seconds=inherited_padding,
+        )
         selected_analyzer = analyzer or FrameAnalysisProvider(
             frame_rate=frame_rate, max_samples=max_analysis_frames, silence_settings=configured_silence,
         )
