@@ -8,25 +8,33 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from .process import run_checked
+from .adaptive_silence import SilenceSettings, calibrate_noise, silence_policy
 
 
 _EVENT = re.compile(r"silence_(start|end):\s*(-?\d+(?:\.\d+)?)")
 
 
 def parse_silence_output(output: str, *, source: Path, frame_rate: Fraction,
-                         threshold_db: float, minimum_seconds: float) -> dict[str, Any]:
+                         threshold_db: float, minimum_seconds: float,
+                         duration_seconds: str | Fraction | None = None) -> dict[str, Any]:
     """Convert FFmpeg diagnostics to rational-frame evidence."""
     starts: list[Fraction] = []
     intervals: list[dict[str, Any]] = []
-    for kind, raw in _EVENT.findall(output):
+    events = [(kind, Fraction(raw)) for kind, raw in _EVENT.findall(output)]
+    if duration_seconds is not None:
+        events.append(('end', Fraction(duration_seconds)))
+    for kind, raw in events:
         seconds = Fraction(raw)
         if kind == "start": starts.append(seconds)
         elif starts:
             start = starts.pop(0)
             start_frame = max(0, round(start * frame_rate))
             end_frame = max(start_frame, round(seconds * frame_rate))
-            intervals.append({"start_frame": start_frame, "end_frame": end_frame,
+            if duration_seconds is not None:
+                end_frame = min(end_frame, round(Fraction(duration_seconds) * frame_rate))
+            if end_frame <= start_frame or seconds - start < Fraction(str(minimum_seconds)):
+                continue
+            intervals.append({"id": f"silence_{len(intervals):04d}", "start_frame": start_frame, "end_frame": end_frame,
                               "start_seconds": str(start), "end_seconds": str(seconds)})
     return {"kind": "ffmpeg_silencedetect", "source": str(source.resolve()),
             "settings": {"threshold_db": threshold_db, "minimum_seconds": minimum_seconds},
@@ -35,14 +43,13 @@ def parse_silence_output(output: str, *, source: Path, frame_rate: Fraction,
 
 
 def detect_silence(source: Path, *, frame_rate: Fraction, ffmpeg: str = "ffmpeg",
-                   threshold_db: float = -50.0, minimum_seconds: float = 0.5) -> dict[str, Any]:
-    """Run silencedetect and return frame-rounded, reproducible public evidence."""
-    result = run_checked([
-        ffmpeg, "-hide_banner", "-nostdin", "-i", str(source), "-vn",
-        "-af", f"silencedetect=noise={threshold_db:g}dB:d={minimum_seconds:g}", "-f", "null", "-",
-    ])
-    return parse_silence_output(result.stderr, source=source, frame_rate=frame_rate,
-                                threshold_db=threshold_db, minimum_seconds=minimum_seconds)
+                   threshold_db: float | None = None, minimum_seconds: float = 0.5,
+                   settings: SilenceSettings | None = None, duration_seconds=None,
+                   supervisor=None) -> dict[str, Any]:
+    from .adaptive_silence import analyze_audio
+    return analyze_audio(source, frame_rate=frame_rate, ffmpeg=ffmpeg, threshold_db=threshold_db,
+                         settings=settings or SilenceSettings(minimum_seconds=minimum_seconds),
+                         duration_seconds=duration_seconds, supervisor=supervisor)
 
 
 def apply_silence_removal(plan: dict[str, Any], *, asset_id: str, evidence: dict[str, Any],

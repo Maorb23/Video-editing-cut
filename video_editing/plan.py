@@ -21,10 +21,11 @@ PLAN_VERSION = "1.0"
 OP_TYPES = {
     "trim", "split", "remove", "insert", "reorder", "transition", "caption",
     "overlay", "transform", "volume", "fade_audio", "audio_mix", "speed",
-    "chroma_key", "mask", "filter", "color_grade", "parametric_eq", "reverb", "dereverb",
+    "chroma_key", "mask", "filter", "color_grade", "parametric_eq", "reverb", "dereverb", "audio_transition",
 }
 
 OP_FIELDS: dict[str, set[str]] = {
+    "audio_transition": {"kind", "from_clip_id", "to_clip_id", "picture_boundary_frame", "av_offset_frames", "crossfade_frames", "evidence_id"},
     "trim": {"source_in", "duration"},
     "split": {"at"},
     "remove": set(),
@@ -41,13 +42,14 @@ OP_FIELDS: dict[str, set[str]] = {
     "chroma_key": {"color", "variance", "edge"},
     "mask": {"resource", "mode", "softness", "invert"},
     "filter": {"name", "properties"},
-    "color_grade": {"tint", "brightness", "contrast", "saturation", "keyframes", "interpolation", "mask"},
+    "color_grade": {"tint", "tint_strength", "tail_seconds", "brightness", "contrast", "saturation", "keyframes", "interpolation", "mask"},
     "parametric_eq": {"bands"},
     "reverb": {"room_size", "damping", "wet", "dry", "pre_delay_ms"},
     "dereverb": {"derived_asset_id", "model", "model_sha256"},
 }
 
 OP_REQUIRED: dict[str, set[str]] = {
+    "audio_transition": {"kind", "from_clip_id", "to_clip_id", "picture_boundary_frame", "av_offset_frames", "crossfade_frames"},
     "trim": set(), "split": {"at"}, "remove": set(), "insert": {"track_id", "clip"},
     "reorder": {"track_id", "clip_ids"},
     "transition": {"from_clip_id", "to_clip_id", "duration"},
@@ -312,12 +314,29 @@ def validate_plan(
         else:
             operation_ids.add(opid)
         target = operation.get("target")
-        target_optional = kind in {"insert", "reorder", "transition", "audio_mix"}
+        target_optional = kind in {"insert", "reorder", "transition", "audio_mix", "audio_transition"}
+        target_optional = target_optional or (kind == 'color_grade' and 'tail_seconds' in operation)
         if not target_optional and target not in prospective_clip_ids:
             issues.append(Issue("missing_target", f"{opath}.target", "must identify a declared clip"))
         for key in ("start", "duration"):
             if key in operation and not (_positive_int(operation[key]) if key == "duration" else _frame(operation[key])):
                 issues.append(Issue("invalid_range", f"{opath}.{key}", "must be an integer frame range"))
+        if kind == "audio_transition":
+            if operation.get("kind") not in {"l_cut", "j_cut", "crossfade"}:
+                issues.append(Issue("unsupported_transition", opath, "must be l_cut, j_cut, or crossfade"))
+            for field in ("picture_boundary_frame", "av_offset_frames", "crossfade_frames"):
+                if not _frame(operation.get(field)):
+                    issues.append(Issue("invalid_range", f"{opath}.{field}", "must be a nonnegative integer frame"))
+            offset = operation.get("av_offset_frames")
+            if _frame(offset) and (offset > 6 or (operation.get("kind") == "crossfade" and offset != 0) or (operation.get("kind") in {"l_cut", "j_cut"} and offset < 2)):
+                issues.append(Issue("invalid_range", opath, "L/J offset must be 2–6 frames; crossfade offset must be zero"))
+            for field in ("from_clip_id", "to_clip_id"):
+                if not isinstance(operation.get(field), str) or operation[field] not in prospective_clip_ids:
+                    issues.append(Issue("missing_target", f"{opath}.{field}", "must reference a clip"))
+            if set(operation) & {"target", "start", "duration"}:
+                issues.append(Issue("unsupported_transition_property", opath, "audio transition uses only picture boundary and offsets"))
+            if "evidence_id" in operation and not isinstance(operation["evidence_id"], str):
+                issues.append(Issue("invalid_evidence", opath, "evidence_id must be a string"))
         if kind == "filter":
             name = operation.get("name")
             props = operation.get("properties", {})
@@ -437,6 +456,23 @@ def validate_plan(
         if kind == "transform" and operation.get("interpolation", "linear") != "linear":
             issues.append(Issue("unsupported_transform_property", f"{opath}.interpolation", "only linear interpolation is supported"))
         if kind == "color_grade":
+            if 'tail_seconds' in operation:
+                if not _number(operation['tail_seconds']) or not 0 < operation['tail_seconds'] <= 3600:
+                    issues.append(Issue('invalid_range', opath, 'tail_seconds must be positive and at most 3600'))
+                if set(operation) & {'target', 'start', 'duration'}:
+                    issues.append(Issue('conflicting_operation_property', opath, 'tail_seconds replaces target/start/duration'))
+            if "tint_strength" in operation:
+                for field in ('brightness', 'contrast'):
+                    if field in operation and (not _number(operation[field]) or not -1 <= operation[field] <= 1):
+                        issues.append(Issue('invalid_color_grade', f'{opath}.{field}', 'strong grade adjustment must be from -1 through 1'))
+                if 'saturation' in operation and (not _number(operation['saturation']) or not 0 <= operation['saturation'] <= 3):
+                    issues.append(Issue('invalid_color_grade', f'{opath}.saturation', 'strong grade saturation must be from 0 through 3'))
+                if not _unit_interval(operation["tint_strength"]):
+                    issues.append(Issue("invalid_color_grade", f"{opath}.tint_strength", "must be finite and from 0 through 1"))
+                if not isinstance(operation.get("tint"), str) or re.fullmatch(r"#[0-9a-fA-F]{6}", operation.get("tint", "")) is None:
+                    issues.append(Issue("invalid_color", opath, "strong hue grade requires an opaque #RRGGBB tint"))
+                if operation.get("mask") or operation.get("keyframes"):
+                    issues.append(Issue("unsupported_color_property", opath, "strong hue grading currently requires a static unmasked interval"))
             if operation.get("interpolation", "linear") != "linear":
                 issues.append(Issue("unsupported_color_property", f"{opath}.interpolation", "only linear interpolation is supported"))
             for field in ("brightness", "contrast", "saturation"):
@@ -530,11 +566,21 @@ def validate_plan(
             issues.append(Issue("unsupported_export", "$.export.movflags", "V1 supports only +faststart"))
 
     resolved_tracks: list[dict[str, Any]] = []
+    if not issues and any('tail_seconds' in op for op in operations):
+        from .grading import resolve_tail_grades
+        try:
+            return validate_plan(resolve_tail_grades(data), source=source, check_files=check_files,
+                                 require_confined_paths=require_confined_paths)
+        except VideoEditingError as exc:
+            if isinstance(exc, PlanValidationError): raise
+            raise PlanValidationError([Issue(exc.code, '$.operations', str(exc))]) from exc
     if not issues:
         from .operations import resolve_timeline
 
         try:
             resolved_tracks = resolve_timeline(data)
+            from .audio_transitions import audio_routes
+            audio_routes(data, resolved_tracks)
             resolved_clip_ids = {clip["id"] for track in resolved_tracks for clip in track["clips"]}
             resolved_clips = {clip["id"]: clip for track in resolved_tracks for clip in track["clips"]}
             active_clip_ids = {clip_id for clip_id, clip in resolved_clips.items() if clip.get("enabled", True)}
@@ -591,7 +637,7 @@ def validate_plan(
                                 validate_audio_metadata(audio, expected_audio)
                                 if audio["sample_rate"] != profile["sample_rate"] or audio["channels"] != profile["channels"]:
                                     issues.append(Issue("audio_profile_mismatch", "$.analysis.dereverb.audio", "derived audio must match the project audio profile"))
-                if kind not in {"insert", "reorder", "transition", "audio_mix"} and target not in active_clip_ids:
+                if kind not in {"insert", "reorder", "transition", "audio_mix", "audio_transition"} and target not in active_clip_ids:
                     issues.append(Issue("missing_target", f"$.operations[{index}].target", "target is absent or disabled after structural operations"))
                     continue
                 if kind in timed_effects and target in resolved_clips:

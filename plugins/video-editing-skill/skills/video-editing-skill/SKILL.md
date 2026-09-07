@@ -107,7 +107,17 @@ must cite the corresponding frame-exact entries in `keyframe_coverage` and the
 persisted frame files; never infer coverage from playback or timestamp-based
 seeking. Read the waveform plus silence, peak, volume, and loudness evidence.
 For silence removal, persist detected intervals and settings before deriving
-frame-exact linked A/V segments. For EQ/reverb/dereverb, inspect the structured
+frame-exact linked A/V segments. Read adaptive calibration and policy suggestions
+from `analysis/silence.json`; emit typed candidate decisions, never invented
+noise floors, speech boundaries, frame measurements, lip visibility, or safety
+evidence. Keep detected pauses in `## Detected silences`; Decisions contains only
+actual edit choices. Use synchronized edits when reliable context is absent.
+Only persisted matching safety evidence may authorize typed L/J cuts; Python
+owns independent A/V routing and source-handle validation. Express all color
+changes through `color_grade`: use `tint_strength: 0.75` for strong arbitrary
+target hues and `tail_seconds` for final-interval intent. Never emit raw MLT/XML
+or arbitrary filter properties. Inspect strong-hue conformance samples for hue
+agreement and retained detail. For EQ/reverb/dereverb, inspect the structured
 audio measurements and effect decisions. Dereverb requires the pinned optional
 `deepfilternet==0.5.6` local runtime during preflight and an immutable derived
 audio asset; stop when unavailable and never substitute noise reduction.

@@ -165,6 +165,28 @@
       container.append(list);
     }
     renderObservations(log.observations);
+    const silenceContainer = el("detected-silences"); silenceContainer.replaceChildren();
+    const silence = plan.edit_plan?.analysis?.silence;
+    const candidates = silence?.intervals || [];
+    const rate = plan.edit_plan?.profile?.frame_rate;
+    const fps = rate ? rate.numerator / rate.denominator : 1;
+    function silenceTime(frame) {
+      const seconds = frame / fps;
+      return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${(seconds % 60).toFixed(2).padStart(5, "0")}`;
+    }
+    if (!candidates.length) empty(silenceContainer);
+    candidates.forEach((pause) => {
+      const item = document.createElement("article"); item.className = "rationale-item";
+      const title = document.createElement("strong");
+      title.textContent = `${silenceTime(pause.start_frame)}–${silenceTime(pause.end_frame)} — ${((pause.end_frame - pause.start_frame) / fps).toFixed(2)} s`;
+      const details = document.createElement("p");
+      const threshold = pause.threshold_db ?? silence.settings?.threshold_db;
+      details.textContent = `Threshold: ${threshold ?? "unavailable"} dBFS · Calibration confidence: ${Number.isFinite(pause.confidence) ? Math.round(pause.confidence * 100) + "%" : "unavailable"} · Suggested action: ${pause.suggestion?.action || "unavailable"}`;
+      const context = document.createElement("p");
+      context.textContent = Object.entries(pause.context || {}).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(" · ") || "Speech and visual context: unavailable";
+      const evidence = document.createElement("code"); evidence.textContent = pause.evidence_id || pause.id;
+      item.append(title, details, context, evidence); silenceContainer.append(item);
+    });
     renderDecisions(log.decisions);
     renderSimple("unsupported", log.unsupported);
     renderSimple("assumptions", log.assumptions);

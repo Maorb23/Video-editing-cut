@@ -12,7 +12,7 @@ from ..probe import probe_one
 from ..supervisor import ProcessSupervisor, Toolchain
 from ..timebase import seconds_to_frames
 from ..workspace import JobWorkspace
-from ..silence import parse_silence_output
+from ..silence import detect_silence, SilenceSettings
 from .base import AnalysisArtifact
 
 
@@ -70,7 +70,8 @@ class FrameAnalysisProvider:
     MAX_SAMPLES = 24
     MAX_PROXY_WIDTH = 1280
 
-    def __init__(self, *, frame_rate: Fraction | None = None, max_samples: int = 12, proxy_width: int = 640) -> None:
+    def __init__(self, *, frame_rate: Fraction | None = None, max_samples: int = 12, proxy_width: int = 640,
+                 silence_settings: SilenceSettings | None = None) -> None:
         if (frame_rate is not None and frame_rate <= 0) or not 1 <= max_samples <= self.MAX_SAMPLES or not 1 <= proxy_width <= self.MAX_PROXY_WIDTH:
             raise ValueError(
                 f"analysis settings require a positive frame rate, 1-{self.MAX_SAMPLES} samples, "
@@ -79,6 +80,7 @@ class FrameAnalysisProvider:
         self.frame_rate = frame_rate
         self.max_samples = max_samples
         self.proxy_width = proxy_width
+        self.silence_settings = silence_settings or SilenceSettings()
 
     @property
     def version(self) -> str:
@@ -170,15 +172,15 @@ class FrameAnalysisProvider:
             "observations": observations,
         }
         if media.get("audio") is not None:
-            detected = supervisor.run([
-                str(toolchain.ffmpeg), "-hide_banner", "-nostdin", "-i", str(source), "-vn",
-                "-af", "silencedetect=noise=-50dB:d=0.5", "-f", "null", "-",
-            ])
-            if detected.returncode:
-                raise ExternalToolError("silence analysis failed", code="analysis_failed")
-            silence = parse_silence_output(detected.stderr, source=source, frame_rate=frame_rate,
-                                           threshold_db=-50.0, minimum_seconds=0.5)
+            silence = detect_silence(source, frame_rate=frame_rate, ffmpeg=str(toolchain.ffmpeg),
+                                     settings=self.silence_settings, duration_seconds=duration_seconds,
+                                     supervisor=supervisor)
+            silence.update(asset_id='source', source_fingerprint=media['fingerprint'])
             silence_path = workspace.write_json("analysis/silence.json", silence)
+            from ..silence_edits import silence_review_markdown
+            review_path = workspace.path('analysis/detected-silences.md')
+            with review_path.open('x', encoding='utf-8') as stream:
+                stream.write(silence_review_markdown(silence, frame_rate))
             data["audio_evidence"] = {"silence": silence,
                                       "evidence_id": silence_path.relative_to(workspace.root).as_posix()}
         path = workspace.write_json("analysis/analysis.json", data)

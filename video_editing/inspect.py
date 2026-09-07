@@ -317,6 +317,8 @@ def inspect(
             })
         automated_findings.append(finding)
 
+    from .grading import inspect_hue_grades
+    automated_findings.extend(inspect_hue_grades(plan, video, edit_plan, pass_dir, ffmpeg_bin))
     audio_evidence: dict[str, Any] = {
         "present": audio_stream is not None,
         "review": {"status": "pending", "observation": "", "severity": None, "source_action": None, "planned_change": None},

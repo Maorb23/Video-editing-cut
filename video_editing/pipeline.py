@@ -113,7 +113,7 @@ def run_pipeline(
         workspace.write_json(attempt.validation.relative_to(workspace.root), validation)
 
         inspection_path: Path | None = None
-        if any(operation.get("enabled", True) and operation.get("type") == "transform" for operation in planned.plan.data["operations"]):
+        if any(operation.get("enabled", True) and (operation.get("type") == "transform" or operation.get('tint_strength', 0) >= .5) for operation in planned.plan.data["operations"]):
             stage = "validate_effects"
             proxy = workspace.path(str(analysis.data["proxy"]))
             inspection_path = inspect(

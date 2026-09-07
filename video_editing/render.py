@@ -116,6 +116,19 @@ def render(
         ),
         cancellation,
     )
+    # Fail before rendering instead of silently accepting an unavailable hue filter.
+    verified_services = set()
+    for node in ET.parse(project).getroot().findall('./producer/filter'):
+        pin = node.find("./property[@name='video-editing-skill:service-version']")
+        if pin is not None:
+            service = node.find("./property[@name='mlt_service']").text
+            if (service, pin.text) in verified_services:
+                continue
+            query = runner.run([binary, '-query', f'filter={service}'])
+            metadata = query.stdout + query.stderr
+            if query.returncode or f'version: {pin.text}' not in metadata:
+                raise VideoEditingError(f'{service} requires pinned {pin.text}', code='unsupported_filter_version')
+            verified_services.add((service, pin.text))
     try:
         result = runner.run(
             arguments,

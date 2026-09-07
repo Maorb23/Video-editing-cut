@@ -64,3 +64,6 @@ Desktop.ini
 # Demo
 demo/**/review/passes/
 demo/**/*.mp4
+
+# Reproducible local adaptive-editing render checks
+/review/adaptive-hue-*/

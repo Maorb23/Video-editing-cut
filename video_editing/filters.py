@@ -31,6 +31,8 @@ def _brightness(properties: dict[str, Any]) -> dict[str, str]:
 
 
 FILTER_CATALOG_VERSION = "mlt-7.28-shotcut-24.06"
+STRONG_HUE_SERVICE = 'avfilter.colorize'
+STRONG_HUE_SERVICE_VERSION = 'Lavfi11.14.102'
 FILTERS: dict[str, FilterSpec] = {
     "brightness": FilterSpec("brightness", {"level": (int, float)}, _brightness),
     "contrast": FilterSpec("frei0r.contrast0r", {"contrast": (int, float)}, _identity),
@@ -44,6 +46,7 @@ FILTERS: dict[str, FilterSpec] = {
 
 
 OPERATION_SERVICES: dict[str, str] = {
+    'audio_transition': 'mix',
     "transition": "luma",
     "caption": "dynamictext",
     "overlay": "affine",

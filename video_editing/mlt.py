@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import os
 import math
+import colorsys
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from .errors import VideoEditingError
-from .filters import FILTERS, FILTER_CATALOG_VERSION
+from .filters import FILTERS, FILTER_CATALOG_VERSION, STRONG_HUE_SERVICE, STRONG_HUE_SERVICE_VERSION
 from .operations import resolve_timeline
 from .plan import ValidatedPlan
 from .timebase import frames_to_mlt_time
+from .audio_transitions import audio_routes
 
 
 GENERATOR = "video-editing-skill/0.1.0"
@@ -162,7 +164,12 @@ def _add_filter(producer: ET.Element, operation: dict[str, Any], profile: dict[s
         def decibels(amplitude: float) -> str:
             return f"{20 * math.log10(amplitude):.6g}" if amplitude > 0 else "-90"
         _property(node, "shotcut:filter", "fadeInVolume" if operation["direction"] == "in" else "fadeOutVolume")
-        _property(node, "level", f"0={decibels(from_value)};{operation['duration'] - 1}={decibels(to_value)}")
+        if operation.get('_linear_amplitude') and operation['duration'] > 1:
+            _property(node, 'level', ';'.join(
+                f"{frame}={decibels(from_value+(to_value-from_value)*frame/(operation['duration']-1))}"
+                for frame in range(operation['duration'])))
+        else:
+            _property(node, "level", f"0={decibels(from_value)};{operation['duration'] - 1}={decibels(to_value)}")
     elif kind == "chroma_key":
         _property(node, "mlt_service", "frei0r.bluescreen0r")
         _property(node, "Color", operation.get("color", "#00ff00"))
@@ -172,6 +179,28 @@ def _add_filter(producer: ET.Element, operation: dict[str, Any], profile: dict[s
         _property(node, "resource", operation["resource"])
         _property(node, "mix", operation.get("softness", 0))
         _property(node, "invert", int(bool(operation.get("invert", False))))
+    elif kind == "color_grade" and "tint_strength" in operation:
+        # colorize uses source lightness with mix=1; hue/saturation replace chroma,
+        # never the video itself. Zero strength is an exact bypass.
+        strength = operation['tint_strength']
+        if strength == 0:
+            producer.remove(node)
+        else:
+            rgb = tuple(int(operation['tint'][i:i+2], 16)/255 for i in (1, 3, 5))
+            hue, _, saturation = colorsys.rgb_to_hls(*rgb)
+            _property(node, 'mlt_service', STRONG_HUE_SERVICE)
+            _property(node, 'video-editing-skill:service-version', STRONG_HUE_SERVICE_VERSION)
+            _property(node, 'av.hue', hue*360)
+            _property(node, 'av.saturation', min(1., saturation*strength*max(0., operation.get('saturation', 1.))))
+            _property(node, 'av.lightness', .5)
+            _property(node, 'av.mix', 1)
+            _property(node, 'av.threads', 1)
+        for field in ('brightness', 'contrast'):
+            value = operation.get(field, 0)
+            if value:
+                extra = ET.SubElement(producer, 'filter', {**attrs, 'id': attrs['id']+'_'+field})
+                _property(extra, 'mlt_service', 'brightness' if field == 'brightness' else 'frei0r.contrast0r')
+                _property(extra, 'level' if field == 'brightness' else '0', 1+value if field == 'brightness' else (1+value)/2)
     elif kind == "color_grade":
         _property(node, "mlt_service", "avfilter.colorbalance")
         _property(node, "shotcut:filter", "colorGrade")
@@ -229,6 +258,17 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
     muted_clips: set[str] = set()
     derived_asset_ids = {op["derived_asset_id"] for op in dereverb_by_target.values()}
     audio_effects = {"volume", "fade_audio", "parametric_eq", "reverb"}
+    for clip_id, route in audio_routes(plan, tracks).items():
+        muted_clips.add(clip_id)
+        audio_id = f"split_audio_{clip_id}"
+        effects = effects_by_target.get(clip_id, [])
+        effects_by_target[audio_id] = [dict(op, id=f"split_{op['id']}") for op in effects if op['type'] in audio_effects]
+        effects_by_target[clip_id] = [op for op in effects if op['type'] not in audio_effects]
+        for direction, start, duration in route.pop('fades'):
+            effects_by_target[audio_id].append({'id': f'{audio_id}_{direction}', 'type': 'fade_audio',
+                'direction': direction, 'start': start - route['timeline_start'] + route['source_in'],
+                'duration': duration, '_linear_amplitude': True})
+        tracks.append({'id': audio_id, 'kind': 'audio', 'clips': [dict(route, id=audio_id)]})
     for track in list(tracks):
         cleaned_clips = []
         for clip in track["clips"]:
@@ -316,6 +356,9 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
             if asset["id"] in derived_asset_ids:
                 _property(producer, "video-editing-skill:fingerprint", asset["fingerprint"])
             for operation in effects_by_target.get(clip["id"], []):
+                if operation['type'] == 'color_grade' and 'tint_strength' in operation:
+                    operation = dict(operation, start=operation.get('start', 0) + clip['source_in'],
+                                     duration=operation.get('duration', clip['duration']-operation.get('start', 0)))
                 _add_filter(producer, operation, profile)
             entry = ET.SubElement(playlist, "entry", {
                 "producer": producer_id,
