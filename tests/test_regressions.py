@@ -188,7 +188,7 @@ class PhaseZeroRegressionTests(unittest.TestCase):
             silence_path = workspace.root / "analysis" / "silence.json"
             review_path = workspace.root / "analysis" / "detected-silences.md"
             evidence = json.loads(silence_path.read_text(encoding="utf-8"))
-            self.assertTrue(evidence["intervals"])
+            self.assertTrue(evidence["intervals"], evidence)
             candidate = evidence["intervals"][0]
             self.assertGreaterEqual(candidate["duration_frames"], 8)
             self.assertEqual(candidate["candidate_id"], candidate["id"])

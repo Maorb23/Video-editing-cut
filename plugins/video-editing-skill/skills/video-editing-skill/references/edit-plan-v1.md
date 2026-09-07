@@ -75,7 +75,9 @@ Silence calibration uses 50 ms RMS windows, the median of the lowest 20%, and
 an 8 dB margin clamped to −60…−30 dBFS. Insufficient room-tone support or
 separation falls back to the documented −50 dBFS threshold. `SilenceSettings`
 configures these values, the phone-video default 0.25 second detection minimum,
-and 0.12 second speech padding. Analysis always covers the probed source duration;
+and 0.12 second speech padding. Detection groups those same RMS windows so
+sample-level phone-noise peaks cannot fragment an otherwise quiet pause.
+Analysis always covers the probed source duration;
 EOF closes at that duration.
 `analysis/silence.json` persists calibration, settings, frame-exact candidates,
 source fingerprints, analyzed duration/rate, evidence IDs, and available context;

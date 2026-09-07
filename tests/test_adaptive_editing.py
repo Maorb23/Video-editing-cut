@@ -10,7 +10,8 @@ from unittest.mock import Mock
 from tests.helpers import valid_plan
 from tests.test_planning import FakeModel, draft
 from tests import test_planning
-from video_editing.adaptive_silence import SilenceSettings, calibrate_noise, silence_policy
+from video_editing.adaptive_silence import (SilenceSettings, calibrate_noise,
+                                            detect_quiet_intervals, silence_policy)
 from video_editing.audio_transitions import audio_routes
 from video_editing.errors import PlanValidationError, VideoEditingError
 from video_editing.mlt import compile_mlt
@@ -43,6 +44,13 @@ class AdaptiveSilenceTests(unittest.TestCase):
             result = calibrate_noise(values,SilenceSettings())
             self.assertEqual(result['threshold_db'],-50)
             self.assertTrue(result['fallback'])
+
+    def test_rms_detection_is_not_broken_by_phone_noise_peaks_inside_windows(self):
+        windows = [(Fraction(index,20), level) for index,level in enumerate(
+            [-18]*4+[-43,-42,-44,-41,-43,-42,-18]*1)]
+        self.assertEqual(detect_quiet_intervals(
+            windows,threshold_db=-40,window_seconds=.05,minimum_seconds=.25,
+            duration_seconds=Fraction(11,20)),[(Fraction(1,5),Fraction(1,2))])
 
     def test_eof_and_rational_frames_and_short_regions(self):
         result = parse_silence_output('silence_start: 1.001\nsilence_end: 1.701\nsilence_start: 2.002',
@@ -139,7 +147,7 @@ class TypedEditingTests(unittest.TestCase):
             'frame_rate':self.plan['profile']['frame_rate'],'analyzed_duration_seconds':'10',
             'analyzed_duration_frames':300,'intervals':[candidate],
             'settings':{**asdict(settings),'threshold_db':-42,'selected_threshold_db':-42},
-            'detector':{'name':'ffmpeg.silencedetect','scope':'full_source','threshold_db':-42,
+            'detector':{'name':'rms_window_threshold/v1','scope':'full_source','threshold_db':-42,
                         'minimum_silence_seconds':settings.minimum_silence_seconds},
             'calibration':{'confidence':.9},'evidence_id':'analysis/silence.json'}
 

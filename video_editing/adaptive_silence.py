@@ -93,6 +93,31 @@ def calibrate_noise(windows: list[float], settings: SilenceSettings) -> dict:
             'fallback_reason': 'insufficient room-tone separation' if confidence < .6 else None}
 
 
+def detect_quiet_intervals(windows: list[tuple[Fraction, float]], *, threshold_db: float,
+                           window_seconds: float, minimum_seconds: float,
+                           duration_seconds: Fraction) -> list[tuple[Fraction, Fraction]]:
+    """Group calibrated quiet RMS windows into deterministic half-open intervals."""
+    window_duration = Fraction(str(window_seconds))
+    minimum_duration = Fraction(str(minimum_seconds))
+    intervals: list[tuple[Fraction, Fraction]] = []
+    start: Fraction | None = None
+    end: Fraction | None = None
+    for timestamp, level in windows:
+        quiet = level <= threshold_db
+        window_end = min(duration_seconds, timestamp + window_duration)
+        if quiet:
+            if start is None:
+                start = timestamp
+            end = window_end
+        elif start is not None and end is not None:
+            if end - start >= minimum_duration:
+                intervals.append((start, end))
+            start = end = None
+    if start is not None and end is not None and end - start >= minimum_duration:
+        intervals.append((start, end))
+    return intervals
+
+
 def analyze_audio(source, *, frame_rate, ffmpeg, threshold_db, settings, duration_seconds, supervisor,
                   source_fingerprint=None):
     from .silence import parse_silence_output
@@ -105,43 +130,52 @@ def analyze_audio(source, *, frame_rate, ffmpeg, threshold_db, settings, duratio
         duration_seconds = metadata.get('duration_seconds')
         if duration_seconds is None:
             raise VideoEditingError('silence analysis requires media duration', code='analysis_failed')
-    windows, events = [], []
+    windows: list[tuple[Fraction, float]] = []
+    pending_timestamp: Fraction | None = None
     def collect(line):
+        nonlocal pending_timestamp
+        timestamp = re.search(r'pts_time:(-?\d+(?:\.\d+)?)', line)
+        if timestamp:
+            pending_timestamp = Fraction(timestamp.group(1))
         match = re.search(r'lavfi.astats.Overall.RMS_level=(-?inf|-?\d+(?:\.\d+)?)', line)
-        if match:
+        if match and pending_timestamp is not None:
             if len(windows) >= 2_000_000:
                 raise VideoEditingError('audio analysis window limit exceeded', code='resource_limit')
-            windows.append(float(match[1]))
+            windows.append((pending_timestamp, float(match[1])))
+            pending_timestamp = None
     measured = supervisor.run([ffmpeg, '-hide_banner', '-nostdin', '-i', str(source), '-map', '0:a:0',
         '-af', f'aresample=48000,asetnsamples=n={round(settings.window_seconds*48000)}:p=0,'
         'astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-',
         '-f', 'null', '-'], on_line=collect)
     if measured.returncode:
         raise VideoEditingError('audio calibration failed', code='analysis_failed')
-    calibration = calibrate_noise(windows, settings)
+    calibration = calibrate_noise([level for _, level in windows], settings)
     if threshold_db is not None:
         if type(threshold_db) not in (float, int) or not math.isfinite(threshold_db) or not -90 <= threshold_db <= -20:
             raise ValueError('threshold must be -90 through -20 dBFS')
         calibration.update(threshold_db=threshold_db, manual_override=True)
     selected = calibration['threshold_db']
-    def collect_event(line):
-        if 'silence_start:' in line or 'silence_end:' in line: events.append(line)
-    detected = supervisor.run([ffmpeg, '-hide_banner', '-nostdin', '-i', str(source), '-map', '0:a:0',
-        '-af', f'silencedetect=noise={selected:g}dB:d={settings.minimum_silence_seconds:g}',
-        '-f', 'null', '-'], on_line=collect_event)
-    if detected.returncode:
-        raise VideoEditingError('silence detection failed', code='analysis_failed')
-    evidence = parse_silence_output('\n'.join(events), source=source, frame_rate=frame_rate,
+    duration = Fraction(duration_seconds)
+    intervals = detect_quiet_intervals(
+        windows, threshold_db=selected, window_seconds=settings.window_seconds,
+        minimum_seconds=settings.minimum_silence_seconds, duration_seconds=duration,
+    )
+    events = '\n'.join(
+        f'silence_start: {float(start):.12f}\nsilence_end: {float(end):.12f}'
+        for start, end in intervals
+    )
+    evidence = parse_silence_output(events, source=source, frame_rate=frame_rate,
         threshold_db=selected, minimum_seconds=settings.minimum_silence_seconds,
         duration_seconds=duration_seconds)
-    duration = Fraction(duration_seconds)
     evidence.update(
-        version='1.0', status='complete', source_fingerprint=source_fingerprint,
+        version='1.0', kind='rms_window_silence', status='complete', source_fingerprint=source_fingerprint,
         analyzed_duration_seconds=str(duration), analyzed_duration_frames=round(duration * frame_rate),
         calibration=calibration,
         settings={**asdict(settings), 'threshold_db': selected, 'selected_threshold_db': selected},
-        detector={'name': 'ffmpeg.silencedetect', 'scope': 'full_source',
-                  'threshold_db': selected, 'minimum_silence_seconds': settings.minimum_silence_seconds},
+        detector={'name': 'rms_window_threshold/v1', 'scope': 'full_source',
+                  'threshold_db': selected, 'window_seconds': settings.window_seconds,
+                  'window_count': len(windows),
+                  'minimum_silence_seconds': settings.minimum_silence_seconds},
         evidence_id='analysis/silence.json',
     )
     for item in evidence['intervals']:
