@@ -141,6 +141,56 @@ class PostgresRepository:
                 )
             return order
 
+    def create_paddle_top_up(self, user_id: str, package: dict[str, Any]) -> dict[str, Any]:
+        order_id = new_id("ord")
+        with self._connect() as connection:
+            return connection.execute(
+                """INSERT INTO top_up_orders(id,user_id,package_key,credits,price_minor,currency,status,provider)
+                   VALUES (%s,%s,%s,%s,%s,%s,'pending','paddle') RETURNING *""",
+                (order_id, user_id, package["key"], package["credits"], package["price_minor"], package["currency"]),
+            ).fetchone()
+
+    def get_top_up_order(self, order_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM top_up_orders WHERE id=%s", (order_id,)).fetchone()
+        if not row:
+            raise NotFoundError("top-up order not found")
+        return row
+
+    def complete_paddle_top_up(self, order_id: str, transaction_id: str, event_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            order = connection.execute("SELECT * FROM top_up_orders WHERE id=%s FOR UPDATE", (order_id,)).fetchone()
+            if not order:
+                raise NotFoundError("top-up order not found")
+            if order["provider"] != "paddle":
+                raise ConflictError("top-up order belongs to a different payment provider")
+            if order["status"] == "succeeded":
+                if order["provider_reference"] == transaction_id:
+                    return order
+                raise ConflictError("top-up order was already completed by another transaction")
+            if order["status"] != "pending":
+                raise ConflictError("top-up order is not pending")
+            claimed = connection.execute(
+                "SELECT id FROM top_up_orders WHERE provider='paddle' AND provider_reference=%s AND id<>%s",
+                (transaction_id, order_id),
+            ).fetchone()
+            if claimed:
+                raise ConflictError("Paddle transaction was already used")
+            order = connection.execute(
+                """UPDATE top_up_orders SET status='succeeded',provider_reference=%s,completed_at=now()
+                   WHERE id=%s RETURNING *""",
+                (transaction_id, order_id),
+            ).fetchone()
+            connection.execute(
+                """INSERT INTO credit_ledger_entries
+                   (id,user_id,amount,reason,payment_reference,idempotency_key,metadata)
+                   VALUES (%s,%s,%s,'purchase',%s,%s,%s)""",
+                (new_id("crd"), order["user_id"], order["credits"], transaction_id,
+                 f"paddle-transaction:{transaction_id}",
+                 json.dumps({"package_key": order["package_key"], "provider": "paddle", "event_id": event_id})),
+            )
+            return order
+
     def list_projects(self, user_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(

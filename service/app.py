@@ -14,9 +14,10 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .config import Settings
 from .django_auth import AuthenticationBackend, DjangoAuthentication
 from .account_services import TransactionalEmailSender, TurnstileVerifier, build_rate_limiter
-from .models import (ApproveRequest, AvatarRequest, CreateEditRequest, EditResponse, EmailRequest,
+from .models import (ApproveRequest, AvatarRequest, CheckoutRequest, CreateEditRequest, EditResponse, EmailRequest,
                      LoginRequest, PasswordResetRequest, PlanResponse, RegisterRequest,
                      ResultResponse, ReviseRequest, TokenRequest, TopUpRequest, UserResponse, VideoResponse)
+from .paddle import PaddleWebhookError, completed_transaction, verify_paddle_webhook
 from .repository import ConflictError, NotFoundError, PostgresRepository, new_id
 from .storage import Storage, build_storage
 
@@ -45,11 +46,20 @@ def create_app(
     limiter = build_rate_limiter(selected.redis_url)
     application = FastAPI(title="Melvid API", version="1.1.0")
     web_root = Path(__file__).with_name("web").resolve()
-    credit_packages = [
-        {"key": "small", "name": "Starter", "credits": 250, "price_minor": 900, "currency": "USD"},
-        {"key": "medium", "name": "Creator", "credits": 750, "price_minor": 2200, "currency": "USD", "recommended": True},
-        {"key": "large", "name": "Studio", "credits": 2000, "price_minor": 4900, "currency": "USD"},
-    ]
+    if selected.payment_mode == "paddle":
+        credit_packages = [
+            {"key": "small", "name": "Starter", "credits": 250, "price_minor": 500, "currency": "USD", "price_id": selected.paddle_price_starter},
+            {"key": "medium", "name": "Creator", "credits": 750, "price_minor": 1000, "currency": "USD", "price_id": selected.paddle_price_creator, "recommended": True},
+            {"key": "large", "name": "Studio", "credits": 2000, "price_minor": 2000, "currency": "USD", "price_id": selected.paddle_price_studio},
+        ]
+    elif selected.payment_mode == "mock":
+        credit_packages = [
+            {"key": "small", "name": "Starter", "credits": 250, "price_minor": 900, "currency": "USD"},
+            {"key": "medium", "name": "Creator", "credits": 750, "price_minor": 2200, "currency": "USD", "recommended": True},
+            {"key": "large", "name": "Studio", "credits": 2000, "price_minor": 4900, "currency": "USD"},
+        ]
+    else:
+        credit_packages = []
 
     async def deliver_email(*, to: str, subject: str, text: str) -> bool:
         try:
@@ -256,11 +266,13 @@ def create_app(
 
     @application.get("/v1/billing/packages")
     async def packages() -> dict[str, Any]:
-        return {"packages": credit_packages, "mode": "mock"}
+        return {"packages": credit_packages, "mode": selected.payment_mode}
 
     @application.get("/v1/public-config")
     async def public_config() -> dict[str, Any]:
-        return {"turnstile_site_key": selected.turnstile_site_key, "payment_mode": "mock"}
+        return {"turnstile_site_key": selected.turnstile_site_key, "payment_mode": selected.payment_mode,
+                "paddle_environment": selected.paddle_environment if selected.payment_mode == "paddle" else None,
+                "paddle_client_token": selected.paddle_client_token if selected.payment_mode == "paddle" else None}
 
     @application.get("/v1/billing/credits")
     async def credits(request: Request) -> dict[str, Any]:
@@ -269,12 +281,53 @@ def create_app(
 
     @application.post("/v1/billing/mock-top-ups", status_code=201)
     async def mock_top_up(payload: TopUpRequest, request: Request) -> dict[str, Any]:
+        if selected.payment_mode != "mock":
+            raise HTTPException(404, detail={"code": "not_found", "message": "mock billing is disabled", "retryable": False})
         user = await authenticated_user(request)
         package = next((item for item in credit_packages if item["key"] == payload.package_key), None)
         if not package:
             raise HTTPException(422, detail={"code": "unknown_package", "message": "credit package is unavailable", "retryable": False})
         order = await run_blocking(repo.create_mock_top_up, user["id"], package, payload.simulate == "success")
         return {"order": order, "credits": billing_payload(await run_blocking(repo.credit_summary, user["id"]), user), "payment_mode": "mock"}
+
+    @application.post("/v1/billing/paddle/checkouts", status_code=201)
+    async def paddle_checkout(payload: CheckoutRequest, request: Request) -> dict[str, Any]:
+        if selected.payment_mode != "paddle":
+            raise HTTPException(404, detail={"code": "not_found", "message": "Paddle billing is not configured", "retryable": False})
+        user = await authenticated_user(request)
+        package = next((item for item in credit_packages if item["key"] == payload.package_key), None)
+        if not package:
+            raise HTTPException(422, detail={"code": "unknown_package", "message": "credit package is unavailable", "retryable": False})
+        order = await run_blocking(repo.create_paddle_top_up, user["id"], package)
+        return {"order": {"id": order["id"], "status": order["status"]}, "price_id": package["price_id"],
+                "customer_email": user["email"], "payment_mode": "paddle"}
+
+    @application.post("/v1/billing/paddle/webhook")
+    async def paddle_webhook(request: Request) -> dict[str, Any]:
+        if selected.payment_mode != "paddle" or not selected.paddle_webhook_secret:
+            raise HTTPException(404, detail={"code": "not_found", "message": "Paddle billing is not configured", "retryable": False})
+        raw_body = await request.body()
+        try:
+            event = verify_paddle_webhook(raw_body, request.headers.get("paddle-signature"), selected.paddle_webhook_secret)
+        except PaddleWebhookError as exc:
+            raise HTTPException(401, detail={"code": "invalid_webhook", "message": str(exc), "retryable": False}) from exc
+        if event.get("event_type") != "transaction.completed":
+            return {"received": True}
+        try:
+            event_id, transaction_id, order_id, price_id = completed_transaction(event)
+            order = await run_blocking(repo.get_top_up_order, order_id)
+            package = next((item for item in credit_packages if item["key"] == order["package_key"]), None)
+            data = event["data"]
+            if (not package or order["provider"] != "paddle" or price_id != package["price_id"]
+                    or order["credits"] != package["credits"] or order["price_minor"] != package["price_minor"]
+                    or order["currency"] != package["currency"] or data.get("currency_code") != package["currency"]):
+                raise ConflictError("Paddle transaction does not match the pending order")
+            await run_blocking(repo.complete_paddle_top_up, order_id, transaction_id, event_id)
+        except PaddleWebhookError as exc:
+            raise HTTPException(422, detail={"code": "invalid_transaction", "message": str(exc), "retryable": False}) from exc
+        except (NotFoundError, ConflictError) as exc:
+            raise missing_or_conflict(exc) from exc
+        return {"received": True}
 
     def edit_response(row: dict[str, Any]) -> EditResponse:
         iteration = row.get("current_iteration", 1)

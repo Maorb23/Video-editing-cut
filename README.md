@@ -279,9 +279,36 @@ image alone.
 The web application includes Django-backed accounts and sessions, email
 verification/password-reset links, user-scoped project history, avatars, and
 an immutable credit ledger. Run `video-edit-migrate` before deploying the API.
-The top-up endpoint is deliberately mocked and never accepts card data. Prices
-come from the backend; a future payment provider must confirm an order on the
-server before adding an idempotent ledger event.
+Top-ups use the local mock flow when Paddle is not configured over local HTTP.
+Secure HTTPS deployments disable top-ups when Paddle is absent, so a missing
+production configuration cannot expose simulated credits. When Paddle is
+configured, the browser opens Paddle Checkout for a server-selected one-time
+price. Credits are added only after the API verifies a `transaction.completed`
+webhook, matches its price and currency to the pending order, and records an
+idempotent ledger event. Card data is handled by Paddle and never reaches this
+application.
+
+For Railway, add the following variables to the API service only. Use sandbox
+credentials first, then switch the environment and client token together for
+production:
+
+```dotenv
+PADDLE_ENVIRONMENT=sandbox
+PADDLE_CLIENT_TOKEN=test_...
+PADDLE_WEBHOOK_SECRET=pdl_ntfset_...
+PADDLE_PRICE_STARTER=pri_... # $5 one-time price, 250 credits
+PADDLE_PRICE_CREATOR=pri_... # $10 one-time price, 750 credits
+PADDLE_PRICE_STUDIO=pri_...  # $20 one-time price, 2000 credits
+```
+
+In Paddle, create a URL notification destination for
+`https://YOUR_RAILWAY_DOMAIN/v1/billing/paddle/webhook`, subscribe it to
+`transaction.completed`, and copy that destination's secret into
+`PADDLE_WEBHOOK_SECRET`. Add the Railway/custom domain to Paddle's approved
+checkout domains and set its default payment link in Checkout Settings. Run
+`video-edit-migrate` during Railway pre-deploy so
+the unique Paddle transaction constraint is installed. Partial Paddle
+configuration fails startup rather than silently falling back to mock billing.
 
 Railway should retain the existing API, worker, and PostgreSQL services. Add a
 Redis service for shared signup/login rate limits in production. Configure

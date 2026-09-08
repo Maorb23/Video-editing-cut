@@ -70,6 +70,11 @@ class TopUpRequest(BaseModel):
     simulate: str = Field(default="success", pattern=r"^(success|failure)$")
 
 
+class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    package_key: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
+
+
 class ReviseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     instruction: str = Field(min_length=1, max_length=20_000)

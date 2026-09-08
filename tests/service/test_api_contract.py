@@ -32,6 +32,7 @@ class FakeRepository:
         self.sessions = {}
         self.profiles = {}
         self.ledger = {}
+        self.orders = {}
 
     def register(self, *, email, password):
         if email in self.users:
@@ -74,6 +75,29 @@ class FakeRepository:
         self.ensure_profile(user_id)
         if succeed: self.ledger[user_id].append({"id": "crd_topup", "amount": package["credits"], "reason": "purchase", "edit_id": None, "payment_reference": "ord_mock", "metadata": {}, "created_at": datetime.now(timezone.utc)})
         return {"id": "ord_mock", "package_key": package["key"], "status": "succeeded" if succeed else "failed"}
+    def create_paddle_top_up(self, user_id, package):
+        order = {"id": "ord_" + str(len(self.orders) + 1) * 32, "user_id": user_id,
+                 "package_key": package["key"], "credits": package["credits"],
+                 "price_minor": package["price_minor"], "currency": package["currency"],
+                 "status": "pending", "provider": "paddle", "provider_reference": None}
+        self.orders[order["id"]] = order
+        return order
+    def get_top_up_order(self, order_id):
+        if order_id not in self.orders: raise NotFoundError("top-up order not found")
+        return self.orders[order_id]
+    def complete_paddle_top_up(self, order_id, transaction_id, event_id):
+        order = self.get_top_up_order(order_id)
+        if order["status"] == "succeeded":
+            if order["provider_reference"] == transaction_id: return order
+            raise ConflictError("order already completed")
+        if any(item.get("payment_reference") == transaction_id for entries in self.ledger.values() for item in entries):
+            raise ConflictError("transaction already used")
+        order.update(status="succeeded", provider_reference=transaction_id)
+        self.ensure_profile(order["user_id"])
+        self.ledger[order["user_id"]].append({"id": "crd_paddle", "amount": order["credits"],
+            "reason": "purchase", "edit_id": None, "payment_reference": transaction_id,
+            "metadata": {"provider": "paddle", "event_id": event_id}, "created_at": datetime.now(timezone.utc)})
+        return order
     def list_projects(self, user_id): return [] if not self.edit or self.edit.get("user_id") != user_id else [{**self.edit, "filename": self.video["filename"], "instruction": "Keep the action", "updated_at": self.edit["created_at"], "current_iteration": 1, "active_iteration": None, "approved_iteration": None, "credits_used": 0, "iterations": []}]
 
     def create_video(self, **values):

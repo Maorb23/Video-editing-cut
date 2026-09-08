@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import tempfile
+import time
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 
@@ -57,6 +61,42 @@ class SaasAccountTests(IsolatedAsyncioTestCase):
                 self.assertEqual(failed.json()["credits"]["balance"], 200)
                 success = await client.post("/v1/billing/mock-top-ups", json={"package_key": "small", "simulate": "success"})
                 self.assertEqual(success.json()["credits"]["balance"], 450)
+        finally:
+            temporary.cleanup()
+
+    async def test_paddle_checkout_requires_verified_matching_webhook_and_is_idempotent(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        root = Path(temporary.name)
+        prices = {"small": "pri_" + "a" * 26, "medium": "pri_" + "b" * 26, "large": "pri_" + "c" * 26}
+        secret = "pdl_ntfset_test_secret"
+        settings = Settings("unused", "filesystem", root / "objects", root / "jobs", max_upload_bytes=1024,
+            paddle_environment="sandbox", paddle_client_token="test_client_token", paddle_webhook_secret=secret,
+            paddle_price_starter=prices["small"], paddle_price_creator=prices["medium"], paddle_price_studio=prices["large"])
+        repo = FakeRepository()
+        app = create_app(settings, repo, FilesystemStorage(settings.storage_root), blocking_runner=run_inline, authentication=repo)
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+                await client.post("/v1/auth/register", json={"email": "pay@example.com", "password": "password123"})
+                packages = (await client.get("/v1/billing/packages")).json()
+                self.assertEqual(packages["mode"], "paddle")
+                self.assertEqual([item["price_minor"] for item in packages["packages"]], [500, 1000, 2000])
+                checkout = await client.post("/v1/billing/paddle/checkouts", json={"package_key": "small"})
+                self.assertEqual(checkout.status_code, 201)
+                order_id = checkout.json()["order"]["id"]
+                timestamp = int(time.time())
+                event = {"event_id": "evt_test", "event_type": "transaction.completed", "data": {
+                    "id": "txn_test", "status": "completed", "subscription_id": None, "currency_code": "USD",
+                    "custom_data": {"melvid_order_id": order_id},
+                    "items": [{"quantity": 1, "price": {"id": prices["small"]}}],
+                }}
+                raw = json.dumps(event, separators=(",", ":")).encode()
+                signature = hmac.new(secret.encode(), str(timestamp).encode() + b":" + raw, hashlib.sha256).hexdigest()
+                headers = {"Paddle-Signature": f"ts={timestamp};h1={signature}", "Content-Type": "application/json"}
+                first = await client.post("/v1/billing/paddle/webhook", content=raw, headers=headers)
+                replay = await client.post("/v1/billing/paddle/webhook", content=raw, headers=headers)
+                self.assertEqual((first.status_code, replay.status_code), (200, 200))
+                self.assertEqual((await client.get("/v1/billing/credits")).json()["balance"], 450)
+                self.assertEqual(len([item for item in repo.ledger[next(iter(repo.ledger))] if item["reason"] == "purchase"]), 1)
         finally:
             temporary.cleanup()
 

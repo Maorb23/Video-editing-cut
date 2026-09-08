@@ -382,14 +382,55 @@
   el("resend-verification").addEventListener("click", async () => { busy("resend-verification", true, "Sending…"); try { const result = await request("/v1/auth/resend-verification", { method: "POST" }); el("verification-banner").querySelector("p").textContent = result.message; } catch (error) { actionError(error); } finally { busy("resend-verification", false); } });
   el("forgot-password").addEventListener("click", async () => { const email = el("login-email").value.trim(); if (!email) { showAuthError("login-error", "Enter your email first."); return; } busy("forgot-password", true, "Sending…"); try { const result = await request("/v1/auth/forgot-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) }); showAuthError("login-error", result.message); } catch (error) { showAuthError("login-error", errorText(error)); } finally { busy("forgot-password", false); } });
   let selectedPackage = null;
+  let paymentMode = "mock";
+  let paddleReady = null;
+  function loadScript(source) {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${source}"]`);
+      if (existing && window.Paddle) { resolve(); return; }
+      const script = existing || document.createElement("script");
+      script.src = source; script.async = true;
+      script.addEventListener("load", resolve, { once: true });
+      script.addEventListener("error", () => reject(new Error("Secure payment checkout could not be loaded.")), { once: true });
+      if (!existing) document.head.append(script);
+    });
+  }
+  async function ensurePaddle() {
+    if (paddleReady) return paddleReady;
+    paddleReady = (async () => {
+      const config = await request("/v1/public-config");
+      if (config.payment_mode !== "paddle" || !config.paddle_client_token) throw new Error("Paddle checkout is not configured.");
+      await loadScript("https://cdn.paddle.com/paddle/v2/paddle.js");
+      if (config.paddle_environment === "sandbox") window.Paddle.Environment.set("sandbox");
+      window.Paddle.Initialize({ token: config.paddle_client_token, eventCallback: (event) => {
+        if (event.name !== "checkout.completed") return;
+        el("topup-status").textContent = "Payment completed. Confirming your credits…";
+        let attempts = 0;
+        const refreshCredits = async () => {
+          attempts += 1;
+          try { await loadCredits(); } catch (_) { /* Retry while the signed webhook is processed. */ }
+          if (attempts < 8) setTimeout(refreshCredits, 1500);
+          else el("topup-status").textContent = "Payment received. Reopen your account if the new credits are not visible yet.";
+        };
+        refreshCredits();
+      }});
+      return window.Paddle;
+    })();
+    try { return await paddleReady; } catch (error) { paddleReady = null; throw error; }
+  }
   async function openTopUp() {
     selectedPackage = null;
-    el("mock-success").disabled = true; el("mock-failure").disabled = true;
+    el("purchase-topup").disabled = true; el("mock-failure").disabled = true;
     el("order-summary").textContent = "Choose a package.";
     el("topup-status").textContent = "Loading credit packages…";
     el("package-list").replaceChildren(); el("topup-dialog").showModal();
     try {
       const data = await request("/v1/billing/packages");
+      paymentMode = data.mode;
+      el("topup-description").textContent = paymentMode === "paddle" ? "Select a package and pay securely with Paddle." : paymentMode === "mock" ? "Select a package. Payments are simulated—no card details are collected." : "Credit purchases are temporarily unavailable.";
+      el("purchase-topup").textContent = paymentMode === "paddle" ? "Continue to payment" : "Simulate success";
+      el("purchase-topup").dataset.label = el("purchase-topup").textContent;
+      el("mock-failure").classList.toggle("hidden", paymentMode !== "mock");
       data.packages.forEach((item) => {
         const button = document.createElement("button");
         button.type = "button"; button.setAttribute("aria-pressed", "false");
@@ -400,26 +441,33 @@
           selectedPackage = item;
           el("package-list").querySelectorAll("button").forEach((node) => { node.classList.toggle("selected", node === button); node.setAttribute("aria-pressed", String(node === button)); });
           el("order-summary").textContent = `${item.name}: ${item.credits} credits for $${(item.price_minor / 100).toFixed(2)}`;
-          el("mock-success").disabled = false; el("mock-failure").disabled = false;
+          el("purchase-topup").disabled = false; el("mock-failure").disabled = paymentMode !== "mock";
         });
         el("package-list").append(button);
       });
       el("topup-status").textContent = data.packages.length ? "" : "No packages are available right now. Close this window and try again later.";
     } catch (error) { el("topup-status").textContent = errorText(error) + " Close this window and try again."; }
   }
-  async function submitTopUp(simulate) {
-    if (!selectedPackage || el("mock-success").disabled) return;
+  async function submitTopUp(simulate = "success") {
+    if (!selectedPackage || el("purchase-topup").disabled) return;
     const packageKey = selectedPackage.key;
-    busy("mock-success", true, "Processing…"); el("mock-failure").disabled = true;
+    busy("purchase-topup", true, "Processing…"); el("mock-failure").disabled = true;
     el("package-list").querySelectorAll("button").forEach((button) => { button.disabled = true; });
     try {
+      if (paymentMode === "paddle") {
+        const paddle = await ensurePaddle();
+        const data = await request("/v1/billing/paddle/checkouts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ package_key: packageKey }) });
+        paddle.Checkout.open({ items: [{ priceId: data.price_id, quantity: 1 }], customer: { email: data.customer_email }, customData: { melvid_order_id: data.order.id } });
+        el("topup-status").textContent = "Complete payment in the secure Paddle checkout.";
+        return;
+      }
       const data = await request("/v1/billing/mock-top-ups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ package_key: packageKey, simulate }) });
       renderCredits(data.credits);
       el("topup-status").textContent = data.order.status === "succeeded" ? "Credits added successfully." : "The simulated payment failed. No credits were added. You can try again.";
     } catch (error) { el("topup-status").textContent = errorText(error); }
-    finally { busy("mock-success", false); el("mock-failure").disabled = false; el("package-list").querySelectorAll("button").forEach((button) => { button.disabled = false; }); }
+    finally { busy("purchase-topup", false); el("mock-failure").disabled = paymentMode !== "mock"; el("package-list").querySelectorAll("button").forEach((button) => { button.disabled = false; }); }
   }
-  el("top-up").addEventListener("click", () => openTopUp().catch(actionError)); el("close-topup").addEventListener("click", () => el("topup-dialog").close()); el("mock-success").addEventListener("click", () => submitTopUp("success")); el("mock-failure").addEventListener("click", () => submitTopUp("failure"));
+  el("top-up").addEventListener("click", () => openTopUp().catch(actionError)); el("close-topup").addEventListener("click", () => el("topup-dialog").close()); el("purchase-topup").addEventListener("click", () => submitTopUp()); el("mock-failure").addEventListener("click", () => submitTopUp("failure"));
   el("retry-status").addEventListener("click", () => { busy("retry-status", true, "Checking…"); refresh().finally(() => busy("retry-status", false)); });
   el("failure-new").addEventListener("click", openEditor);
   const query = new URLSearchParams(location.search); if (query.get("verify")) request("/v1/auth/verify-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: query.get("verify") }) }).then(() => history.replaceState({}, "", "/")).catch(() => {});

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +39,12 @@ class Settings:
     email_api_key: str | None = None
     email_from: str = "Melvid <no-reply@melvid.example>"
     email_provider: str = "generic"
+    paddle_environment: str = "sandbox"
+    paddle_client_token: str | None = None
+    paddle_webhook_secret: str | None = None
+    paddle_price_starter: str | None = None
+    paddle_price_creator: str | None = None
+    paddle_price_studio: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -77,7 +84,21 @@ class Settings:
             email_api_key=(os.environ.get("RESEND_API_KEY") or os.environ.get("MELVID_EMAIL_API_KEY") or "").strip() or None,
             email_from=(os.environ.get("DEFAULT_FROM_MAIL") or os.environ.get("MELVID_EMAIL_FROM", "Melvid <no-reply@melvid.example>")).strip(),
             email_provider=(os.environ.get("EMAIL_PROVIDER") or os.environ.get("MELVID_EMAIL_PROVIDER", "generic")).strip(),
+            paddle_environment=os.environ.get("PADDLE_ENVIRONMENT", "sandbox").strip().lower(),
+            paddle_client_token=(os.environ.get("PADDLE_CLIENT_TOKEN") or "").strip() or None,
+            paddle_webhook_secret=(os.environ.get("PADDLE_WEBHOOK_SECRET") or "").strip() or None,
+            paddle_price_starter=(os.environ.get("PADDLE_PRICE_STARTER") or "").strip() or None,
+            paddle_price_creator=(os.environ.get("PADDLE_PRICE_CREATOR") or "").strip() or None,
+            paddle_price_studio=(os.environ.get("PADDLE_PRICE_STUDIO") or "").strip() or None,
         )
+
+    @property
+    def payment_mode(self) -> str:
+        values = (self.paddle_client_token, self.paddle_webhook_secret, self.paddle_price_starter,
+                  self.paddle_price_creator, self.paddle_price_studio)
+        if all(values):
+            return "paddle"
+        return "disabled" if self.session_cookie_secure else "mock"
 
     def validate(self) -> None:
         from video_editing.adaptive_silence import SilenceSettings
@@ -102,3 +123,16 @@ class Settings:
             raise ValueError("VIDEO_EDIT_S3_BUCKET is required for S3 storage")
         if self.session_cookie_secure and self.django_secret_key == "video-editing-local-development-only":
             raise ValueError("VIDEO_EDIT_DJANGO_SECRET_KEY must be configured for secure deployments")
+        paddle_values = (self.paddle_client_token, self.paddle_webhook_secret, self.paddle_price_starter,
+                         self.paddle_price_creator, self.paddle_price_studio)
+        if any(paddle_values) and not all(paddle_values):
+            raise ValueError("Paddle billing requires the client token, webhook secret, and all three price IDs")
+        if self.paddle_environment not in {"sandbox", "production"}:
+            raise ValueError("PADDLE_ENVIRONMENT must be 'sandbox' or 'production'")
+        if all(paddle_values):
+            expected_token = "test_" if self.paddle_environment == "sandbox" else "live_"
+            if not self.paddle_client_token.startswith(expected_token):
+                raise ValueError(f"PADDLE_CLIENT_TOKEN must use the {self.paddle_environment} environment")
+            prices = (self.paddle_price_starter, self.paddle_price_creator, self.paddle_price_studio)
+            if len(set(prices)) != 3 or not all(re.fullmatch(r"pri_[a-z\d]{26}", value or "") for value in prices):
+                raise ValueError("Paddle price IDs must be three distinct pri_ identifiers")
