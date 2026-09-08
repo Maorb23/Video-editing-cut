@@ -11,6 +11,7 @@ from .supervisor import ProcessSupervisor
 
 
 _SSIM_ALL = re.compile(r"\bAll:([0-9]+(?:\.[0-9]+)?)")
+MINIMUM_L_CUT_SSIM = .80
 
 
 def boundary_similarity(
@@ -55,16 +56,16 @@ def enrich_transition_evidence(
         similarity = None
         if index < max_candidates and audio_safe and handles_safe:
             similarity = boundary_similarity(proxy, before_frame, after_frame, ffmpeg=ffmpeg, supervisor=supervisor)
-        near_static = similarity is not None and similarity >= .99
-        safe = audio_safe and handles_safe and near_static
+        visually_compatible = similarity is not None and similarity >= MINIMUM_L_CUT_SSIM
+        safe = audio_safe and handles_safe and visually_compatible
         visual_id = f"analysis/transition-safety.json#{candidate['id']}"
         if similarity is not None:
             context["evidence_ids"] = [*context.get("evidence_ids", []), visual_id]
         context.update(
-            visual_discontinuity="low" if near_static else "high" if similarity is not None else "unavailable",
+            visual_discontinuity="low" if visually_compatible else "high" if similarity is not None else "unavailable",
             visual_similarity_ssim=similarity,
-            lips_visible_near_cut=False if near_static else None,
-            lips_assessment="near-static boundary; no visible mouth-motion mismatch detected" if near_static else "unavailable",
+            lips_visible_near_cut=False if visually_compatible else None,
+            lips_assessment="compatible boundary motion under the talking-head L-cut threshold" if visually_compatible else "unavailable",
             source_handles_safe=handles_safe,
             adjacency_safe=True,
             l_cut_safe=safe,
@@ -76,7 +77,7 @@ def enrich_transition_evidence(
         records.append({
             "candidate_id": candidate["id"], "status": "safe" if safe else "fallback",
             "before_frame": before_frame, "after_frame": after_frame,
-            "visual_similarity_ssim": similarity, "minimum_visual_similarity_ssim": .99,
+            "visual_similarity_ssim": similarity, "minimum_visual_similarity_ssim": MINIMUM_L_CUT_SSIM,
             "speech_before": context.get("speech_before"), "speech_after": context.get("speech_after"),
             "room_tone_difference": context.get("room_tone_difference"),
             "source_handles_safe": handles_safe, "adjacency_safe": True,

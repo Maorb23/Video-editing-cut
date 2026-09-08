@@ -95,7 +95,7 @@ class AdaptiveSilenceTests(unittest.TestCase):
         self.assertEqual(context['room_tone_difference'], 'low')
         self.assertGreaterEqual(context['confidence'], .8)
 
-    def test_transition_evidence_authorizes_only_near_static_safe_l_cut(self):
+    def test_transition_evidence_uses_talking_head_visual_threshold(self):
         candidate = {
             'id':'pause','start_frame':30,'end_frame':60,'duration_frames':30,
             'contextual_evidence':{'status':'complete','confidence':.95,'evidence_ids':['audio:pause'],
@@ -105,7 +105,7 @@ class AdaptiveSilenceTests(unittest.TestCase):
         evidence = {'source_fingerprint':'sha256:test','frame_rate':{'numerator':30,'denominator':1},
                     'intervals':[candidate]}
         runner = Mock()
-        runner.run.return_value = Mock(returncode=0,stdout='',stderr='SSIM Y:0.995 All:0.995 (23.0)')
+        runner.run.return_value = Mock(returncode=0,stdout='',stderr='SSIM Y:0.85 All:0.85 (8.2)')
         safety = enrich_transition_evidence(
             evidence,proxy=Path('proxy.mp4'),frame_rate=Fraction(30),duration_frames=120,
             settings=SilenceSettings(),ffmpeg='ffmpeg',supervisor=runner,
@@ -120,7 +120,7 @@ class AdaptiveSilenceTests(unittest.TestCase):
                 'speech_before':True,'speech_after':True,'room_tone_difference':'low',
                 'sentence_boundary':True,'non_speech':True,'emphasis_score':'low'},
         }
-        runner.run.return_value = Mock(returncode=0,stdout='',stderr='SSIM Y:0.85 All:0.85 (8.2)')
+        runner.run.return_value = Mock(returncode=0,stdout='',stderr='SSIM Y:0.79 All:0.79 (6.8)')
         moving_safety = enrich_transition_evidence(
             {**evidence,'intervals':[moving_candidate]},proxy=Path('proxy.mp4'),frame_rate=Fraction(30),
             duration_frames=120,settings=SilenceSettings(),ffmpeg='ffmpeg',supervisor=runner,
