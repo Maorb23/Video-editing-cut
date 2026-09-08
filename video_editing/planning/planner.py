@@ -207,8 +207,8 @@ class EditPlanner:
     def _assemble(draft: dict[str, Any], analysis: AnalysisArtifact, source_relative: str) -> dict[str, Any]:
         source = analysis.data["source"]
         rate = analysis.data["timeline_policy"]["frame_rate"]
-        width = source["video"]["width"]
-        height = source["video"]["height"]
+        width = source["video"].get("display_width") or source["video"]["width"]
+        height = source["video"].get("display_height") or source["video"]["height"]
         return {
             "version": "1.0",
             "profile": {

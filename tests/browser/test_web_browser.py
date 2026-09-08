@@ -62,7 +62,8 @@ class WebBrowserTests(TestCase):
         self.socket.close()
         self.temporary_directory.cleanup()
 
-    def install_api(self, *, edit_state: str = "awaiting_approval", upload_status: int = 201) -> None:
+    def install_api(self, *, edit_state: str = "awaiting_approval", upload_status: int = 201,
+                    email_verified: bool = True) -> None:
         script = f"""
         (() => {{
           const editId = 'edt_{'2' * 32}';
@@ -75,12 +76,12 @@ class WebBrowserTests(TestCase):
             const json = (body, status = 200) => new Response(JSON.stringify(body), {{
               status, headers: {{'Content-Type': 'application/json'}}
             }});
-            if (url === '/v1/auth/me') return json({{'id': 'usr_{'0' * 32}', 'email': 'editor@example.com'}});
+            if (url === '/v1/auth/me') return json({{'id': 'usr_{'0' * 32}', 'email': 'editor@example.com', 'email_verified': {str(email_verified).lower()}}});
             if (url === '/v1/videos') return json({{'id': 'vid_{'1' * 32}', 'state': 'uploaded', 'filename': 'clip.mp4'}}, {upload_status});
             if (url === '/v1/edits' && options.method === 'POST') return json({{'id': editId, 'state': 'analyzing', 'created_at': '2026-09-04T00:00:00Z'}});
             if (url.endsWith('/iterations')) return json({{iterations: Array.from({{length: iteration}}, (_, i) => ({{iteration: i + 1, plan_id: planId, preview_status: 'queued'}}))}});
             if (url.endsWith('/plan')) return json({{
-              edit_id: editId, plan_id: planId, iteration: Number(url.split('/').at(-2)), plan_status: 'awaiting_approval', preview_status: 'queued', status: 'proposed', summary: 'Short highlight', warnings: ['Caption position needs review'], edit_plan: {{version: '1.0'}},
+              edit_id: editId, plan_id: planId, iteration: Number(url.split('/').at(-2)), plan_status: 'awaiting_approval', preview_status: 'queued', status: 'proposed', summary: 'Short highlight', warnings: ['Caption position needs review'], edit_plan: {{version: '1.0', profile: {{width: 1080, height: 1920}}}},
               decision_log: {{observations: [{{description: 'Subject on the right', confidence: 0.82, evidence: ['frame-580.png']}}], decisions: [{{request: 'focus', operation: 'transform', reason: 'Subject visible', confidence: 0.78}}], unsupported: ['Pitch shifting'], assumptions: ['Sampled evidence is sufficient']}}
             }});
             if (url.endsWith('/revise')) {{ iteration++; state = 'awaiting_approval'; return json({{id: editId, iteration, state}}); }}
@@ -173,6 +174,21 @@ class WebBrowserTests(TestCase):
         self.page.locator("#prompt-chips button").first.click()
         self.assertTrue(self.page.locator("#instruction").input_value())
         self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), 390)
+
+    def test_unverified_user_cannot_see_or_open_editor(self) -> None:
+        self.install_api(email_verified=False)
+        self.page.goto(self.page_url)
+        sync_api.expect(self.page.locator("#verification-banner")).to_be_visible()
+        sync_api.expect(self.page.locator("#nav-editor")).to_be_hidden()
+        sync_api.expect(self.page.locator("#side-editor")).to_be_hidden()
+        sync_api.expect(self.page.locator("#start-panel")).to_be_hidden()
+
+    def test_phone_video_preview_and_result_use_plan_aspect_ratio(self) -> None:
+        self.install_api()
+        self.create_edit()
+        self.page.locator("#plan-panel").wait_for(state="visible")
+        self.assertEqual(self.page.locator("#preview-video").evaluate("node => node.style.aspectRatio"), "1080 / 1920")
+        self.assertEqual(self.page.locator("#result-video").evaluate("node => node.style.aspectRatio"), "1080 / 1920")
 
     def test_failed_edit_can_return_to_editor(self) -> None:
         self.install_api(edit_state="failed")

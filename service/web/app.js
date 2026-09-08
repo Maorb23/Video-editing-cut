@@ -73,6 +73,20 @@
     button.setAttribute("aria-busy", String(active));
     button.textContent = active ? label : button.dataset.label;
   }
+  function showProcessing(state, heading, message, percent) {
+    el("job-panel").dataset.state = state;
+    el("job-stage").textContent = heading;
+    el("status-message").textContent = message;
+    el("progress-bar").style.width = `${percent}%`;
+    el("job-progress").setAttribute("aria-valuenow", String(percent));
+    el("job-progress").setAttribute("aria-valuetext", message);
+    show("job-panel");
+  }
+  function setEditorAccess(user) {
+    const verified = user?.email_verified === true;
+    ["nav-editor", "side-editor", "projects-new", "empty-new", "close-profile"].forEach((id) => el(id).classList.toggle("hidden", !verified));
+    return verified;
+  }
   function actionError(error) { el("action-error").textContent = errorText(error); el("action-error").classList.remove("hidden"); }
   function errorText(error) { return error?.error?.message || error?.detail || "The request could not be completed. Please try again."; }
   function authErrorText(error) { return error?.status === 404 ? "Authentication is not available on the running server. Restart the API and try again." : errorText(error); }
@@ -88,10 +102,11 @@
     document.querySelectorAll(".public-nav").forEach((node) => node.classList.add("hidden"));
     document.querySelectorAll(".private-nav").forEach((node) => node.classList.remove("hidden"));
     ["user-email", "logout", "export-feedback"].forEach((id) => el(id).classList.remove("hidden"));
-    el("verification-banner").classList.toggle("hidden", Boolean(user.email_verified));
+    const verified = setEditorAccess(user);
+    el("verification-banner").classList.toggle("hidden", verified);
     el("profile-verification").textContent = user.email_verified ? "Verified" : "Unverified";
     el("profile-verification").classList.toggle("verified", Boolean(user.email_verified));
-    if (!landingMode) show("start-panel"); else show();
+    if (!landingMode) show(verified ? "start-panel" : "profile-panel"); else show();
     loadCredits().catch(() => { el("nav-credit-balance").textContent = "Credits unavailable"; });
   }
   async function request(path, options = {}) {
@@ -109,6 +124,11 @@
     const plan = await request(`/v1/edits/${editId}/iterations/${selection}/plan`);
     if (currentEdit !== editId || selection !== selectedIteration) return;
     activePlan = plan;
+    const profile = plan.edit_plan?.profile;
+    if (Number(profile?.width) > 0 && Number(profile?.height) > 0) {
+      el("preview-video").style.aspectRatio = `${profile.width} / ${profile.height}`;
+      el("result-video").style.aspectRatio = `${profile.width} / ${profile.height}`;
+    }
     el("plan-summary").textContent = plan.summary;
     el("plan-document").textContent = JSON.stringify(plan.edit_plan, null, 2);
     const warnings = el("plan-warnings");
@@ -248,7 +268,7 @@
       el("job-progress").setAttribute("aria-valuenow", String(edit.progress?.percent ?? percent));
       el("job-progress").setAttribute("aria-valuetext", edit.progress?.message || message);
       el("job-panel").dataset.state = edit.state;
-      el("job-stage").textContent = { analyzing: "Preparing your edit", planning: "Building your plan", awaiting_approval: "Ready for your review", approved: "Plan approved", rendering: "Bringing your edit to life", completed: "Edit complete", failed: "Edit paused" }[edit.state] || "Working on your edit";
+      el("job-stage").textContent = { analyzing: "Planning your video", planning: "Planning your video", awaiting_approval: "Ready for your review", approved: "Plan approved", rendering: "Rendering your video", completed: "Edit complete", failed: "Edit paused" }[edit.state] || "Working on your edit";
       updateWorkflow({ analyzing: 2, planning: 2, awaiting_approval: 2, approved: 3, rendering: 4, completed: 5, failed: 2 }[edit.state] ?? 2);
       const hasPlan = await loadIterations(edit);
       if (sequence !== refreshSequence) return;
@@ -260,7 +280,7 @@
       if (["analyzing", "planning", "rendering"].includes(edit.state) || edit.jobs?.some((job) => ["queued", "running"].includes(job.status))) schedulePoll(); else stopPolling();
     } catch (error) { if (sequence !== refreshSequence) return; const message = errorText(error); el("status-message").textContent = message; el("failure-message").textContent = message; show("job-panel", "failure-panel", "feedback-panel"); stopPolling(); }
   }
-  function start(edit) { editId = edit.id; selectedIteration = null; followLatest = true; saveSession(); record("edit_created"); show("job-panel"); refresh(); }
+  function start(edit) { editId = edit.id; selectedIteration = null; followLatest = true; saveSession(); record("edit_created"); showProcessing("planning", "Planning your video", "Analyzing your source and creating a reviewable edit plan.", 10); refresh(); }
 
   const promptExamples = ["Zoom into the player from 00:04 to 00:07", "Crop to the left side during this section", "Reframe around the speaker", "Slow this moment down to 0.6x", "Cut the first 2 seconds", "Zoom out after the shot", "Pan from the left side to the right", "Remove the section from 00:12 to 00:16"];
   promptExamples.forEach((text) => { const chip = document.createElement("button"); chip.type = "button"; chip.textContent = text; chip.addEventListener("click", () => { const input = el("instruction"); input.value = input.value.trim() ? `${input.value.trim()}\n${text}` : text; input.focus(); }); el("prompt-chips").append(chip); });
@@ -269,7 +289,7 @@
   function renderAvatars(selected) { const grid = el("avatar-grid"); grid.replaceChildren(); Object.entries(avatars).forEach(([key, icon]) => { const button = document.createElement("button"); button.type = "button"; button.title = key.replace("-", " "); button.setAttribute("aria-label", `Choose ${button.title} avatar`); button.textContent = icon; button.classList.toggle("selected", key === selected); button.setAttribute("aria-pressed", String(key === selected)); button.addEventListener("click", async () => { button.disabled = true; try { await request("/v1/account/avatar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ avatar_key: key }) }); currentUser.avatar_key = key; renderAvatars(key); el("current-avatar").textContent = icon; } catch (error) { actionError(error); } finally { button.disabled = false; } }); grid.append(button); }); el("current-avatar").textContent = avatars[selected] || avatars.camera; }
   function renderCredits(credits) { const unmetered = credits.mode === "unmetered"; el("credit-mode").textContent = unmetered ? "Admin · Unmetered editing" : "Credits for your next edit"; el("credit-balance").textContent = unmetered ? "API cost only" : `${credits.balance} credits`; el("nav-credit-balance").textContent = unmetered ? "Admin · API cost only" : `${credits.balance} credits`; el("top-up").classList.toggle("hidden", unmetered); const history = el("credit-history"); history.replaceChildren(); if (!credits.entries.length) { history.textContent = unmetered ? "Admin edits do not consume application credits." : "No credit activity yet."; return; } credits.entries.forEach((entry) => { const row = document.createElement("div"); row.className = "history-row"; const detail = document.createElement("div"); const reason = document.createElement("strong"); reason.textContent = entry.reason.replace("_", " "); const date = document.createElement("small"); date.textContent = new Date(entry.created_at).toLocaleDateString(); detail.append(reason, date); const amount = document.createElement("b"); amount.className = entry.amount > 0 ? "positive" : "negative"; amount.textContent = `${entry.amount > 0 ? "+" : ""}${entry.amount}`; row.append(detail, amount); history.append(row); }); }
   async function loadCredits() { const credits = await request("/v1/billing/credits"); renderCredits(credits); return credits; }
-  async function openAccount() { stopPolling(); refreshSequence++; el("action-error").classList.add("hidden"); el("landing-panel").classList.add("hidden"); el("app-shell").classList.remove("hidden"); show("profile-panel"); const data = await request("/v1/account"); currentUser = data.user; el("profile-email").textContent = data.user.email; el("profile-id").textContent = data.user.id; el("profile-verification").textContent = data.user.email_verified ? "Verified" : "Unverified"; el("profile-verification").classList.toggle("verified", data.user.email_verified); renderAvatars(data.user.avatar_key); renderCredits(data.credits); }
+  async function openAccount() { stopPolling(); refreshSequence++; el("action-error").classList.add("hidden"); el("landing-panel").classList.add("hidden"); el("app-shell").classList.remove("hidden"); show("profile-panel"); const data = await request("/v1/account"); currentUser = data.user; setEditorAccess(data.user); el("profile-email").textContent = data.user.email; el("profile-id").textContent = data.user.id; el("profile-verification").textContent = data.user.email_verified ? "Verified" : "Unverified"; el("profile-verification").classList.toggle("verified", data.user.email_verified); renderAvatars(data.user.avatar_key); renderCredits(data.credits); }
   function statusText(value) { return String(value || "unknown").replaceAll("_", " "); }
   async function openProjects() { stopPolling(); refreshSequence++; el("action-error").classList.add("hidden"); el("landing-panel").classList.add("hidden"); el("app-shell").classList.remove("hidden"); show("projects-panel"); el("projects-loading").classList.remove("hidden"); el("projects-list").replaceChildren(); el("projects-empty").classList.add("hidden"); try { const data = await request("/v1/projects"); el("projects-empty").classList.toggle("hidden", data.projects.length > 0); data.projects.forEach((project) => { const card = document.createElement("article"); card.className = "project-card"; const head = document.createElement("div"); head.className = "project-head"; const title = document.createElement("div"); const heading = document.createElement("h2"); heading.textContent = project.filename; const date = document.createElement("p"); date.textContent = `${new Date(project.created_at).toLocaleDateString()} · ${project.credits_used} credits used`; title.append(heading, date); const reopen = document.createElement("button"); reopen.className = "button button-secondary"; reopen.textContent = "Reopen"; reopen.addEventListener("click", () => { editId = project.id; selectedIteration = null; followLatest = true; saveSession(); refresh(); }); head.append(title, reopen); const iterations = document.createElement("div"); iterations.className = "iteration-list"; project.iterations.forEach((item) => { const row = document.createElement("div"); row.className = "iteration-row"; const number = document.createElement("strong"); number.textContent = `#${item.iteration}`; const prompt = document.createElement("p"); prompt.textContent = item.instruction; const state = document.createElement("span"); state.className = "state"; state.textContent = item.has_video ? "Final" : item.preview_status === "succeeded" ? "Preview" : statusText(item.status); row.append(number, prompt, state); iterations.append(row); }); card.append(head, iterations); el("projects-list").append(card); }); } catch (error) { const message = document.createElement("p"); message.className = "form-error"; message.setAttribute("role", "alert"); message.textContent = errorText(error); const retry = document.createElement("button"); retry.className = "button button-secondary"; retry.textContent = "Try loading projects again"; retry.addEventListener("click", openProjects); el("projects-list").replaceChildren(message, retry); } finally { el("projects-loading").classList.add("hidden"); } }
 
@@ -298,6 +318,7 @@
     busy("approve-plan", true, "Approving and starting render…");
     updateWorkflow(3);
     el("action-error").classList.add("hidden");
+    showProcessing("rendering", "Rendering your video", "Applying the approved plan while preserving the source dimensions.", 72);
     try { await request(`/v1/edits/${editId}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan_id: activePlan.plan_id }) }); record("plan_approved", { plan_id: activePlan.plan_id }); await request(`/v1/edits/${editId}/render`, { method: "POST" }); await refresh(); }
     catch (error) { actionError(error); await refresh(); }
     finally { busy("approve-plan", false); el("approve-plan").disabled = activePlan?.plan_status !== "awaiting_approval" || ["planning", "analyzing", "rendering"].includes(latestEdit?.state); }
@@ -311,18 +332,21 @@
     event.preventDefault();
     const instruction = el("revision-instruction").value.trim();
     if (!instruction) return;
-    el("request-changes").disabled = true;
+    busy("request-changes", true, "Planning your video…");
     el("revision-error").textContent = "";
     try {
       const edit = await request(`/v1/edits/${editId}/revise`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instruction }) });
       selectedIteration = null; activePlan = null; followLatest = true;
       el("revision-instruction").value = "";
       record("revision_requested", { iteration: edit.iteration });
+      showProcessing("planning", "Planning your video", "Applying your requested changes to a new reviewable plan.", 35);
       await refresh();
-    } catch (error) { el("revision-error").textContent = errorText(error); el("request-changes").disabled = false; }
+    } catch (error) { el("revision-error").textContent = errorText(error); show("job-panel", "plan-panel"); }
+    finally { busy("request-changes", false); }
   });
   el("render-video").addEventListener("click", async () => {
     busy("render-video", true, "Starting render…");
+    showProcessing("rendering", "Rendering your video", "Rendering the approved edit at the original display dimensions.", 72);
     try { await request(`/v1/edits/${editId}/render`, { method: "POST" }); record("render_requested"); await refresh(); }
     catch (error) { actionError(error); }
     finally { busy("render-video", false); }
@@ -356,8 +380,8 @@
       const user = await request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       signedIn(user);
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      openEditor();
-      if (saved?.editId) { editId = saved.editId; show("job-panel"); refresh(); }
+      if (user.email_verified === true) openEditor();
+      if (user.email_verified === true && saved?.editId) { editId = saved.editId; show("job-panel"); refresh(); }
     } finally {
       button.disabled = false;
       button.textContent = path.endsWith("register") ? "Create account" : "Log in";
@@ -365,7 +389,7 @@
   }
   el("login-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await authenticate("/v1/auth/login", el("login-email").value, el("login-password").value, "login-error", "login-submit"); } catch (error) { showAuthError("login-error", authErrorText(error)); } });
   el("register-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await authenticate("/v1/auth/register", el("register-email").value, el("register-password").value, "register-error", "register-submit"); } catch (error) { showAuthError("register-error", authErrorText(error)); } });
-  function openEditor() { stopPolling(); refreshSequence++; editId = null; activePlan = null; selectedIteration = null; localStorage.removeItem(STORAGE_KEY); el("action-error").classList.add("hidden"); el("landing-panel").classList.add("hidden"); el("app-shell").classList.remove("hidden"); show("start-panel"); }
+  function openEditor() { if (!setEditorAccess(currentUser)) { show("profile-panel"); return; } stopPolling(); refreshSequence++; editId = null; activePlan = null; selectedIteration = null; localStorage.removeItem(STORAGE_KEY); el("action-error").classList.add("hidden"); el("landing-panel").classList.add("hidden"); el("app-shell").classList.remove("hidden"); show("start-panel"); }
   ["nav-editor", "side-editor", "projects-new", "empty-new"].forEach((id) => el(id).addEventListener("click", openEditor));
   ["nav-projects", "side-projects"].forEach((id) => el(id).addEventListener("click", openProjects));
   ["side-account", "nav-balance"].forEach((id) => el(id).addEventListener("click", () => openAccount().catch(actionError)));
@@ -470,8 +494,21 @@
   el("top-up").addEventListener("click", () => openTopUp().catch(actionError)); el("close-topup").addEventListener("click", () => el("topup-dialog").close()); el("purchase-topup").addEventListener("click", () => submitTopUp()); el("mock-failure").addEventListener("click", () => submitTopUp("failure"));
   el("retry-status").addEventListener("click", () => { busy("retry-status", true, "Checking…"); refresh().finally(() => busy("retry-status", false)); });
   el("failure-new").addEventListener("click", openEditor);
-  const query = new URLSearchParams(location.search); if (query.get("verify")) request("/v1/auth/verify-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: query.get("verify") }) }).then(() => history.replaceState({}, "", "/")).catch(() => {});
+  async function restoreSession() {
+    const query = new URLSearchParams(location.search);
+    if (query.get("verify")) {
+      try {
+        await request("/v1/auth/verify-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: query.get("verify") }) });
+        history.replaceState({}, "", "/");
+      } catch (_) {}
+    }
+    try {
+      signedIn(await request("/v1/auth/me"));
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      if (currentUser?.email_verified === true && saved?.editId) { editId = saved.editId; show("job-panel"); refresh(); }
+    } catch (_) { el("landing-panel").classList.remove("hidden"); show(); }
+  }
   request("/v1/public-config").then((config) => { if (!config.turnstile_site_key) return; const script = document.createElement("script"); script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"; script.async = true; script.onload = () => window.turnstile.render("#turnstile-slot", { sitekey: config.turnstile_site_key }); document.head.append(script); }).catch(() => {});
   el("logout").addEventListener("click", async () => { await fetch("/v1/auth/logout", { method: "POST" }); stopPolling(); localStorage.removeItem(STORAGE_KEY); editId = null; currentUser = null; el("app-shell").classList.add("hidden"); el("landing-panel").classList.remove("hidden"); document.querySelectorAll(".public-nav").forEach((node) => node.classList.remove("hidden")); document.querySelectorAll(".private-nav").forEach((node) => node.classList.add("hidden")); ["user-email", "logout", "export-feedback"].forEach((id) => el(id).classList.add("hidden")); show(); });
-  request("/v1/auth/me").then(signedIn).then(() => { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); if (saved?.editId) { editId = saved.editId; show("job-panel"); refresh(); } }).catch(() => { el("landing-panel").classList.remove("hidden"); show(); });
+  restoreSession();
 })();

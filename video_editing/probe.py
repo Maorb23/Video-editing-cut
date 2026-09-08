@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import shutil
 from fractions import Fraction
 from pathlib import Path
@@ -12,6 +13,23 @@ from typing import Any
 from .errors import VideoEditingError
 from .process import run_checked
 from .supervisor import ProcessSupervisor
+
+
+def _display_rotation(video: dict[str, Any]) -> int:
+    """Return normalized container rotation used to display phone footage."""
+    raw = (video.get("tags") or {}).get("rotate")
+    for side_data in video.get("side_data_list") or []:
+        if side_data.get("rotation") is not None:
+            raw = side_data["rotation"]
+            break
+    try:
+        numeric = float(raw)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(numeric):
+        return 0
+    normalized = int(round(numeric / 90.0) * 90) % 360
+    return normalized if normalized in {0, 90, 180, 270} else 0
 
 
 def fingerprint(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -46,6 +64,12 @@ def probe_one(path: Path, *, ffprobe: str | None = None, supervisor: ProcessSupe
     duration_text = raw.get("format", {}).get("duration") or (video or audio or {}).get("duration")
     duration = str(Fraction(duration_text)) if duration_text not in (None, "N/A") else None
     selected_rate = (video or {}).get("avg_frame_rate")
+    rotation = _display_rotation(video) if video is not None else 0
+    encoded_width = (video or {}).get("width")
+    encoded_height = (video or {}).get("height")
+    display_width, display_height = encoded_width, encoded_height
+    if rotation in {90, 270}:
+        display_width, display_height = encoded_height, encoded_width
     return {
         "id": path.stem,
         "path": str(path),
@@ -54,7 +78,8 @@ def probe_one(path: Path, *, ffprobe: str | None = None, supervisor: ProcessSupe
         "fingerprint": fingerprint(path),
         "duration_seconds": duration,
         "video": None if video is None else {
-            "codec": video.get("codec_name"), "width": video.get("width"), "height": video.get("height"),
+            "codec": video.get("codec_name"), "width": encoded_width, "height": encoded_height,
+            "display_width": display_width, "display_height": display_height, "rotation": rotation,
             "avg_frame_rate": selected_rate, "r_frame_rate": video.get("r_frame_rate"),
             "pixel_format": video.get("pix_fmt"), "time_base": video.get("time_base"),
         },

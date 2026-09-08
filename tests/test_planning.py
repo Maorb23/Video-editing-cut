@@ -60,6 +60,20 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual({item["properties"]["type"]["const"] for item in variants}, __import__("video_editing.plan", fromlist=["OP_TYPES"]).OP_TYPES)
         self.assertTrue(all(set(item["properties"]) == set(item["required"]) for item in variants))
 
+    def test_phone_display_dimensions_are_preserved_in_plan_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            asset = root / "phone.mp4"
+            asset.write_bytes(b"video")
+            analysis = self.analysis(root, asset)
+            analysis.data["source"]["video"].update(display_width=1080, display_height=1920, rotation=270)
+
+            result = EditPlanner(FakeModel([draft()])).plan(
+                "Keep the whole clip", analysis, plan_path=root / "edit-plan.json", source_relative="phone.mp4",
+            )
+
+            self.assertEqual((result.plan.profile["width"], result.plan.profile["height"]), (1080, 1920))
+
     def test_schema_const_and_enum_nodes_have_explicit_compatible_types(self) -> None:
         def value_type(value: Any) -> str:
             if value is None:

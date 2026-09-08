@@ -55,6 +55,13 @@ class MltTests(unittest.TestCase):
         }
         self.assertEqual(export_properties["video-editing-skill:export.format"], "mp4")
         self.assertEqual(export_properties["video-editing-skill:export.video_codec"], "libx264")
+        profile_properties = {
+            item.get("name"): item.text
+            for item in compiled.findall("./tractor[@id='ves_main']/property")
+            if item.get("name", "").startswith("video-editing-skill:profile.")
+        }
+        self.assertEqual(profile_properties["video-editing-skill:profile.width"], "1920")
+        self.assertEqual(profile_properties["video-editing-skill:profile.height"], "1080")
 
     def test_caption_css_rgba_is_converted_to_mlt_argb(self) -> None:
         plan = valid_plan(self.asset)

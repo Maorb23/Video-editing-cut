@@ -36,6 +36,23 @@ class ProcessToolTests(unittest.TestCase):
             self.assertEqual(result["duration_seconds"], "1001/1000")
             self.assertTrue(result["fingerprint"].startswith("sha256:"))
 
+    @patch("video_editing.probe.run_checked")
+    def test_probe_uses_phone_rotation_for_display_dimensions(self, run_checked: MagicMock) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / "phone.mp4"
+            media.write_bytes(b"phone")
+            run_checked.return_value.stdout = json.dumps({
+                "format": {"duration": "5"},
+                "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080,
+                             "avg_frame_rate": "30/1", "r_frame_rate": "30/1", "time_base": "1/90000",
+                             "side_data_list": [{"rotation": -90}]}],
+            })
+
+            result = probe_one(media, ffprobe="ffprobe")
+
+            self.assertEqual(result["video"]["rotation"], 270)
+            self.assertEqual((result["video"]["display_width"], result["video"]["display_height"]), (1080, 1920))
+
     @patch("video_editing.render.subprocess.Popen")
     def test_render_uses_list_arguments_and_atomic_partial(self, popen: MagicMock) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -97,7 +114,9 @@ class ProcessToolTests(unittest.TestCase):
                 "<property name='video-editing-skill:export.pixel_format'>yuv420p</property>"
                 "<property name='video-editing-skill:export.movflags'>+faststart</property>"
                 "<property name='video-editing-skill:profile.sample_rate'>48000</property>"
-                "<property name='video-editing-skill:profile.channels'>2</property></tractor></mlt>",
+                "<property name='video-editing-skill:profile.channels'>2</property>"
+                "<property name='video-editing-skill:profile.width'>1080</property>"
+                "<property name='video-editing-skill:profile.height'>1920</property></tractor></mlt>",
                 encoding="utf-8",
             )
             output = root / "final.mp4"
@@ -115,6 +134,7 @@ class ProcessToolTests(unittest.TestCase):
             self.assertIn("vb=2M", popen.call_args.args[0])
             self.assertIn("frequency=48000", popen.call_args.args[0])
             self.assertIn("channels=2", popen.call_args.args[0])
+            self.assertIn("s=1080x1920", popen.call_args.args[0])
 
     @patch("video_editing.render.uuid.uuid4")
     @patch("video_editing.render.subprocess.Popen")
