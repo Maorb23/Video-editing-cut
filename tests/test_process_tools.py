@@ -116,7 +116,9 @@ class ProcessToolTests(unittest.TestCase):
                 "<property name='video-editing-skill:profile.sample_rate'>48000</property>"
                 "<property name='video-editing-skill:profile.channels'>2</property>"
                 "<property name='video-editing-skill:profile.width'>1080</property>"
-                "<property name='video-editing-skill:profile.height'>1920</property></tractor></mlt>",
+                "<property name='video-editing-skill:profile.height'>1920</property>"
+                "<property name='video-editing-skill:profile.frame_rate_num'>30</property>"
+                "<property name='video-editing-skill:profile.frame_rate_den'>1</property></tractor></mlt>",
                 encoding="utf-8",
             )
             output = root / "final.mp4"
@@ -135,6 +137,7 @@ class ProcessToolTests(unittest.TestCase):
             self.assertIn("frequency=48000", popen.call_args.args[0])
             self.assertIn("channels=2", popen.call_args.args[0])
             self.assertIn("s=1080x1920", popen.call_args.args[0])
+            self.assertIn("r=30/1", popen.call_args.args[0])
 
     @patch("video_editing.render.uuid.uuid4")
     @patch("video_editing.render.subprocess.Popen")

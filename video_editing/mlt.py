@@ -416,6 +416,8 @@ def compile_mlt(validated: ValidatedPlan, output: Path, *, base_project: Path | 
     _property(tractor, "shotcut:projectAudioChannels", profile["channels"])
     _property(tractor, "video-editing-skill:profile.width", profile["width"])
     _property(tractor, "video-editing-skill:profile.height", profile["height"])
+    _property(tractor, "video-editing-skill:profile.frame_rate_num", profile["frame_rate"]["numerator"])
+    _property(tractor, "video-editing-skill:profile.frame_rate_den", profile["frame_rate"]["denominator"])
     _property(tractor, "video-editing-skill:profile.sample_rate", profile["sample_rate"])
     _property(tractor, "video-editing-skill:profile.channels", profile["channels"])
     _property(tractor, "shotcut:projectFolder", "0")

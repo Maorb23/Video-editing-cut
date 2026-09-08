@@ -23,13 +23,32 @@ def project_duration_frames(duration_seconds: str | Fraction, frame_rate: Fracti
 
 
 def source_frame_rate(video: dict[str, Any]) -> Fraction:
-    for candidate in (video.get("avg_frame_rate"), video.get("r_frame_rate")):
+    def parse(candidate: Any) -> Fraction | None:
         try:
             rate = Fraction(candidate)
             if rate > 0:
                 return rate
         except (ValueError, TypeError, ZeroDivisionError):
-            continue
+            pass
+        return None
+
+    average = parse(video.get("avg_frame_rate"))
+    nominal = parse(video.get("r_frame_rate"))
+    standard_rates = (
+        Fraction(24000, 1001), Fraction(24), Fraction(25), Fraction(30000, 1001),
+        Fraction(30), Fraction(50), Fraction(60000, 1001), Fraction(60), Fraction(120),
+    )
+    if average in standard_rates:
+        return average
+    if nominal in standard_rates and (average is None or abs(average - nominal) / nominal <= Fraction(1, 10)):
+        return nominal
+    if average is not None:
+        nearest = min(standard_rates, key=lambda rate: abs(average - rate))
+        if abs(average - nearest) / nearest <= Fraction(1, 50):
+            return nearest
+        return average
+    if nominal is not None:
+        return nominal
     raise VideoEditingError("source has no usable rational frame rate", code="unsupported_media")
 
 

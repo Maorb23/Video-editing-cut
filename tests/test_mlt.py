@@ -62,6 +62,8 @@ class MltTests(unittest.TestCase):
         }
         self.assertEqual(profile_properties["video-editing-skill:profile.width"], "1920")
         self.assertEqual(profile_properties["video-editing-skill:profile.height"], "1080")
+        self.assertEqual(profile_properties["video-editing-skill:profile.frame_rate_num"], "30000")
+        self.assertEqual(profile_properties["video-editing-skill:profile.frame_rate_den"], "1001")
 
     def test_caption_css_rgba_is_converted_to_mlt_argb(self) -> None:
         plan = valid_plan(self.asset)

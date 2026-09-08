@@ -132,6 +132,8 @@ def render(
         arguments.append(f"channels={compiled_profile['channels']}")
     if compiled_profile.get("width") and compiled_profile.get("height"):
         arguments.append(f"s={compiled_profile['width']}x{compiled_profile['height']}")
+    if compiled_profile.get("frame_rate_num") and compiled_profile.get("frame_rate_den"):
+        arguments.append(f"r={compiled_profile['frame_rate_num']}/{compiled_profile['frame_rate_den']}")
     arguments.extend(["f=mp4", f"movflags={movflags}"])
     output.parent.mkdir(parents=True, exist_ok=True)
 

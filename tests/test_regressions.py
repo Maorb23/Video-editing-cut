@@ -9,6 +9,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from video_editing.analysis import FrameAnalysisProvider, project_duration_frames, sample_project_frames
+from video_editing.analysis.frames import source_frame_rate
 from video_editing.adaptive_silence import SilenceSettings
 from video_editing.artifacts import validate_compiled_mlt, validate_rendered_video
 from video_editing.errors import PlanValidationError, VideoEditingError
@@ -25,6 +26,14 @@ FIXTURES = Path(__file__).parent / "fixtures" / "regressions"
 
 
 class PhaseZeroRegressionTests(unittest.TestCase):
+    def test_phone_vfr_average_uses_supported_nominal_rate(self) -> None:
+        self.assertEqual(source_frame_rate({
+            "avg_frame_rate": "47340000/1577629", "r_frame_rate": "30/1",
+        }), Fraction(30, 1))
+        self.assertEqual(source_frame_rate({
+            "avg_frame_rate": "30000/1001", "r_frame_rate": "30/1",
+        }), Fraction(30000, 1001))
+
     def fixture(self, name: str) -> dict:
         return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
