@@ -16,8 +16,11 @@ _EVENT = re.compile(r"silence_(start|end):\s*(-?\d+(?:\.\d+)?)")
 
 def parse_silence_output(output: str, *, source: Path, frame_rate: Fraction,
                          threshold_db: float, minimum_seconds: float,
-                         duration_seconds: str | Fraction | None = None) -> dict[str, Any]:
+                         duration_seconds: str | Fraction | None = None,
+                         maximum_frames: int | None = None) -> dict[str, Any]:
     """Convert FFmpeg diagnostics to rational-frame evidence."""
+    if maximum_frames is not None and (type(maximum_frames) is not int or maximum_frames < 1):
+        raise ValueError("maximum_frames must be a positive integer")
     starts: list[Fraction] = []
     intervals: list[dict[str, Any]] = []
     events = [(kind, Fraction(raw)) for kind, raw in _EVENT.findall(output)]
@@ -32,6 +35,9 @@ def parse_silence_output(output: str, *, source: Path, frame_rate: Fraction,
             end_frame = max(start_frame, round(seconds * frame_rate))
             if duration_seconds is not None:
                 end_frame = min(end_frame, round(Fraction(duration_seconds) * frame_rate))
+            if maximum_frames is not None:
+                start_frame = min(start_frame, maximum_frames)
+                end_frame = min(end_frame, maximum_frames)
             if end_frame <= start_frame or seconds - start < Fraction(str(minimum_seconds)):
                 continue
             duration_frames = end_frame - start_frame
@@ -48,11 +54,13 @@ def parse_silence_output(output: str, *, source: Path, frame_rate: Fraction,
 def detect_silence(source: Path, *, frame_rate: Fraction, ffmpeg: str = "ffmpeg",
                    threshold_db: float | None = None, minimum_seconds: float = 0.25,
                    settings: SilenceSettings | None = None, duration_seconds=None,
-                   supervisor=None, source_fingerprint: str | None = None) -> dict[str, Any]:
+                   timeline_duration_frames: int | None = None, supervisor=None,
+                   source_fingerprint: str | None = None) -> dict[str, Any]:
     from .adaptive_silence import analyze_audio
     return analyze_audio(source, frame_rate=frame_rate, ffmpeg=ffmpeg, threshold_db=threshold_db,
                          settings=settings or SilenceSettings(minimum_seconds=minimum_seconds),
                          duration_seconds=duration_seconds, supervisor=supervisor,
+                         timeline_duration_frames=timeline_duration_frames,
                          source_fingerprint=source_fingerprint)
 
 

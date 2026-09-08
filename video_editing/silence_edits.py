@@ -44,10 +44,12 @@ def require_silence_preflight(analysis, *, evidence_path: Path | None = None) ->
         rate = Fraction(rate_data['numerator'], rate_data['denominator'])
         source_duration = Fraction(source['duration_seconds'])
         analyzed_duration = Fraction(evidence['analyzed_duration_seconds'])
-        expected_frames = round(source_duration * rate)
+        expected_frames = source['duration_frames']
         minimum = configured['minimum_silence_seconds']
         padding = configured['speech_padding_seconds']
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        fail()
+    if type(expected_frames) is not int or expected_frames < 1:
         fail()
     if (preflight.get('status') != 'complete' or evidence.get('status') != 'complete'
             or evidence.get('source_fingerprint') != source.get('fingerprint')

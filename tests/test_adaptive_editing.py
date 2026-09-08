@@ -87,6 +87,13 @@ class AdaptiveSilenceTests(unittest.TestCase):
         short = parse_silence_output('silence_start: 0\nsilence_end: .1',source=Path('s'),frame_rate=Fraction(30),threshold_db=-42,minimum_seconds=.5)
         self.assertEqual(short['intervals'],[])
 
+    def test_eof_candidate_is_clamped_to_editable_video_frames(self):
+        result = parse_silence_output(
+            'silence_start: 4.9\nsilence_end: 5.2', source=Path('source'), frame_rate=Fraction(30),
+            threshold_db=-42, minimum_seconds=.25, duration_seconds='5.2', maximum_frames=150,
+        )
+        self.assertEqual([(item['start_frame'], item['end_frame']) for item in result['intervals']], [(147, 150)])
+
     def test_duration_policy_and_context(self):
         for frames,action in [(9,'keep'),(18,'shorten'),(30,'shorten')]:
             decision = silence_policy({'start_frame':0,'end_frame':frames},Fraction(30))

@@ -165,7 +165,7 @@ def detect_quiet_intervals(windows: list[tuple[Fraction, float]], *, threshold_d
 
 
 def analyze_audio(source, *, frame_rate, ffmpeg, threshold_db, settings, duration_seconds, supervisor,
-                  source_fingerprint=None):
+                  timeline_duration_frames: int | None = None, source_fingerprint=None):
     from .silence import parse_silence_output
     supervisor = supervisor or ProcessSupervisor()
     if duration_seconds is None:
@@ -212,15 +212,18 @@ def analyze_audio(source, *, frame_rate, ffmpeg, threshold_db, settings, duratio
     )
     evidence = parse_silence_output(events, source=source, frame_rate=frame_rate,
         threshold_db=selected, minimum_seconds=settings.minimum_silence_seconds,
-        duration_seconds=duration_seconds)
+        duration_seconds=duration_seconds, maximum_frames=timeline_duration_frames)
+    mapped_duration_frames = (timeline_duration_frames
+                              if timeline_duration_frames is not None else round(duration * frame_rate))
     evidence.update(
         version='1.0', kind='rms_window_silence', status='complete', source_fingerprint=source_fingerprint,
-        analyzed_duration_seconds=str(duration), analyzed_duration_frames=round(duration * frame_rate),
+        analyzed_duration_seconds=str(duration), analyzed_duration_frames=mapped_duration_frames,
         calibration=calibration,
         settings={**asdict(settings), 'threshold_db': selected, 'selected_threshold_db': selected},
         detector={'name': 'rms_window_threshold/v1', 'scope': 'full_source',
                   'threshold_db': selected, 'window_seconds': settings.window_seconds,
                   'window_count': len(windows),
+                  'timeline_duration_frames': mapped_duration_frames,
                   'minimum_silence_seconds': settings.minimum_silence_seconds},
         evidence_id='analysis/silence.json',
     )

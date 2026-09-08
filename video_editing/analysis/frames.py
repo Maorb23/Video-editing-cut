@@ -176,6 +176,7 @@ class FrameAnalysisProvider:
         if media.get("audio") is not None:
             silence = detect_silence(source, frame_rate=frame_rate, ffmpeg=str(toolchain.ffmpeg),
                                      settings=self.silence_settings, duration_seconds=duration_seconds,
+                                     timeline_duration_frames=duration_frames,
                                      supervisor=supervisor, source_fingerprint=media['fingerprint'])
             silence.update(asset_id='source')
             silence_path = workspace.write_json("analysis/silence.json", silence)
