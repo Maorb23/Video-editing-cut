@@ -100,7 +100,31 @@ def create_app(
     @application.get("/", include_in_schema=False)
     async def website() -> Response:
         """Serve the Phase 2 local product UI without changing the API boundary."""
-        return await web_asset("index.html")
+        page = await run_blocking((web_root / "index.html").read_text, encoding="utf-8")
+        page = page.replace('</head>', '<link rel="stylesheet" href="/web/legal.css"></head>', 1)
+        footer = (
+            '<footer class="site-footer shell"><span>© 2026 Melvid</span>'
+            '<nav aria-label="Legal"><a href="/terms">Terms of Service</a>'
+            '<a href="/privacy">Privacy Notice</a><a href="/refunds">Refund Policy</a>'
+            '<a href="mailto:maorblumberg@gmail.com">Contact support</a></nav></footer>'
+        )
+        return Response(
+            content=page.replace("</main>", f"</main>{footer}", 1),
+            media_type="text/html; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/terms", include_in_schema=False)
+    async def terms_of_service() -> Response:
+        return await web_asset("terms.html")
+
+    @application.get("/privacy", include_in_schema=False)
+    async def privacy_notice() -> Response:
+        return await web_asset("privacy.html")
+
+    @application.get("/refunds", include_in_schema=False)
+    async def refund_policy() -> Response:
+        return await web_asset("refunds.html")
 
     @application.get("/web/{asset_path:path}", include_in_schema=False)
     async def web_asset(asset_path: str) -> Response:
@@ -110,6 +134,8 @@ def create_app(
             raise HTTPException(status_code=404, detail={"code": "not_found", "message": "web asset not found", "retryable": False})
         media_types = {".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".png": "image/png"}
         content = await run_blocking(candidate.read_bytes)
+        if asset_path in {"terms.html", "privacy.html", "refunds.html"}:
+            content = content.replace(b"</head>", b'<link rel="stylesheet" href="/web/legal.css"></head>', 1)
         return Response(
             content=content,
             media_type=media_types.get(candidate.suffix, "application/octet-stream"),
