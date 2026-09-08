@@ -258,7 +258,19 @@ class EditPlanner:
         if isinstance(audio_evidence, dict) and isinstance(audio_evidence.get("evidence_id"), str):
             evidence.add(audio_evidence["evidence_id"])
             for interval in audio_evidence.get('silence', {}).get('intervals', []):
-                if isinstance(interval.get('evidence_id'), str): evidence.add(interval['evidence_id'])
+                if isinstance(interval.get('evidence_id'), str):
+                    evidence.add(interval['evidence_id'])
+                context = interval.get('contextual_evidence', interval.get('context', {}))
+                if isinstance(context, dict):
+                    evidence.update(item for item in context.get('evidence_ids', []) if isinstance(item, str))
+            transition_id = audio_evidence.get('transition_evidence_id')
+            if isinstance(transition_id, str):
+                evidence.add(transition_id)
+            transition = audio_evidence.get('transition_safety', {})
+            if isinstance(transition, dict):
+                for record in transition.get('candidates', []):
+                    if isinstance(record, dict):
+                        evidence.update(item for item in record.get('evidence_ids', []) if isinstance(item, str))
         base_input = json.dumps({"instruction": instruction, "original_instruction": original_instruction,
                                  "previous_plan": previous_context, "analysis": facts}, ensure_ascii=False)
         attempts: list[dict[str, Any]] = []

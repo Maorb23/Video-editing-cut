@@ -325,6 +325,46 @@ class TypedEditingTests(unittest.TestCase):
         self.assertEqual(result.plan.data['analysis']['silence_decisions'][0]['action'],'shorten')
         self.assertEqual(result.decision_log['decisions'][-1]['operation'],'pause: shorten (synchronized)')
 
+    def test_planner_accepts_persisted_l_cut_evidence_in_decision_log(self):
+        analysis = test_planning.PlanningTests().analysis(self.root,self.media,duration=240)
+        evidence = self.attach_preflight(analysis,self.evidence())
+        evidence['intervals'][0].update(end_frame=78,duration_frames=18,duration_seconds='.6')
+        context = evidence['intervals'][0]['contextual_evidence'] = {
+            'status':'complete','confidence':.92,
+            'evidence_ids':['analysis/silence.json#pause:audio-boundary',
+                            'analysis/transition-safety.json#pause'],
+            'speech_before':True,'speech_after':True,'sentence_boundary':True,'non_speech':True,
+            'emphasis_score':'low','room_tone_difference':'low','visual_discontinuity':'low',
+            'lips_visible_near_cut':False,'source_handles_safe':True,'adjacency_safe':True,
+            'l_cut_safe':True,'j_cut_safe':False,
+        }
+        evidence['intervals'][0]['suggestion'] = silence_policy(evidence['intervals'][0],Fraction(30))
+        transition = {
+            'version':'1.0','kind':'pause_transition_safety','status':'complete',
+            'source_fingerprint':analysis.data['source']['fingerprint'],
+            'frame_rate':{'numerator':30,'denominator':1},'l_cut_offset_frames':4,
+            'candidates':[{'candidate_id':'pause','status':'safe','source_handles_safe':True,
+                'lips_visible_near_cut':False,'l_cut_safe':True,
+                'evidence_ids':list(context['evidence_ids'])}],
+        }
+        analysis.data['audio_evidence'].update(
+            transition_safety=transition,transition_evidence_id='analysis/transition-safety.json')
+        (analysis.path.parent/'analysis'/'silence.json').write_text(json.dumps(evidence),encoding='utf-8')
+        (analysis.path.parent/'analysis'/'transition-safety.json').write_text(json.dumps(transition),encoding='utf-8')
+        response = draft(duration=240)
+        response['silence_decisions'] = [{'asset_id':'source','candidate_id':'pause','action':'shorten'}]
+        response['decision_log'] = {
+            'observations':[{'type':'audio','description':'Safe L-cut boundary',
+                'evidence':['analysis/silence.json#pause:audio-boundary',
+                            'analysis/transition-safety.json#pause'],'confidence':.92}],
+            'decisions':[],'unsupported':[],'assumptions':[],
+        }
+        result = EditPlanner(FakeModel([response])).plan(
+            'Remove pauses longer than 0.5 seconds, preserve 0.12 seconds of padding, and use an L-cut',
+            analysis,plan_path=self.root/'plan.json',source_relative=self.media.name,
+        )
+        self.assertEqual(result.plan.data['analysis']['silence_decisions'][0]['transition'],'l_cut')
+
     def test_preflight_rejects_missing_stale_partial_and_mismatched_evidence(self):
         analysis = test_planning.PlanningTests().analysis(self.root,self.media,duration=240)
         evidence = self.attach_preflight(analysis,self.evidence())
