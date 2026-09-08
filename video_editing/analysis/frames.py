@@ -198,13 +198,21 @@ class FrameAnalysisProvider:
                                      timeline_duration_frames=duration_frames,
                                      supervisor=supervisor, source_fingerprint=media['fingerprint'])
             silence.update(asset_id='source')
+            from ..transition_evidence import enrich_transition_evidence
+            transition_safety = enrich_transition_evidence(
+                silence, proxy=proxy, frame_rate=frame_rate, duration_frames=duration_frames,
+                settings=self.silence_settings, ffmpeg=str(toolchain.ffmpeg), supervisor=supervisor,
+            )
+            workspace.write_json("analysis/transition-safety.json", transition_safety)
             silence_path = workspace.write_json("analysis/silence.json", silence)
             from ..silence_edits import silence_review_markdown
             review_path = workspace.path('analysis/detected-silences.md')
             with review_path.open('x', encoding='utf-8') as stream:
                 stream.write(silence_review_markdown(silence, frame_rate))
             data["audio_evidence"] = {"silence": silence,
-                                      "evidence_id": silence_path.relative_to(workspace.root).as_posix()}
+                                      "evidence_id": silence_path.relative_to(workspace.root).as_posix(),
+                                      "transition_safety": transition_safety,
+                                      "transition_evidence_id": "analysis/transition-safety.json"}
             data.setdefault("preflight", {})["silence"] = {
                 "status": "complete",
                 "evidence_id": silence_path.relative_to(workspace.root).as_posix(),

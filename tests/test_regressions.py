@@ -15,8 +15,10 @@ from video_editing.artifacts import validate_compiled_mlt, validate_rendered_vid
 from video_editing.errors import PlanValidationError, VideoEditingError
 from video_editing.mlt import write_mlt
 from video_editing.plan import validate_plan
+from video_editing.silence_edits import require_silence_preflight
 from video_editing.process import run_checked
 from video_editing.supervisor import ProcessLimits, ProcessSupervisor, Toolchain
+from video_editing.transition_evidence import boundary_similarity
 from video_editing.workspace import JobWorkspace
 
 from tests.helpers import valid_plan
@@ -26,6 +28,23 @@ FIXTURES = Path(__file__).parent / "fixtures" / "regressions"
 
 
 class PhaseZeroRegressionTests(unittest.TestCase):
+    def test_ffmpeg_measures_exact_static_boundary_similarity(self) -> None:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            self.skipTest("FFmpeg unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            proxy = Path(directory) / "proxy.mp4"
+            run_checked([
+                ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=red:size=64x64:rate=30:duration=1",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(proxy),
+            ])
+            similarity = boundary_similarity(
+                proxy, 5, 20, ffmpeg=ffmpeg,
+                supervisor=ProcessSupervisor(ProcessLimits(wall_timeout=20, no_progress_timeout=5)),
+            )
+            self.assertIsNotNone(similarity)
+            self.assertGreaterEqual(similarity, .99)
+
     def test_phone_vfr_average_uses_supported_nominal_rate(self) -> None:
         self.assertEqual(source_frame_rate({
             "avg_frame_rate": "47340000/1577629", "r_frame_rate": "30/1",
@@ -196,6 +215,7 @@ class PhaseZeroRegressionTests(unittest.TestCase):
             )
             silence_path = workspace.root / "analysis" / "silence.json"
             review_path = workspace.root / "analysis" / "detected-silences.md"
+            transition_path = workspace.root / "analysis" / "transition-safety.json"
             evidence = json.loads(silence_path.read_text(encoding="utf-8"))
             self.assertTrue(evidence["intervals"], evidence)
             candidate = evidence["intervals"][0]
@@ -204,6 +224,8 @@ class PhaseZeroRegressionTests(unittest.TestCase):
             self.assertEqual(candidate["source_fingerprint"], analysis.data["source"]["fingerprint"])
             self.assertEqual(evidence["settings"]["minimum_silence_seconds"], .25)
             self.assertIn("## Detected silences", review_path.read_text(encoding="utf-8"))
+            self.assertTrue(transition_path.is_file())
+            self.assertIs(require_silence_preflight(analysis), analysis.data["audio_evidence"]["silence"])
 
     def test_entirely_black_output_is_rejected(self) -> None:
         ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")

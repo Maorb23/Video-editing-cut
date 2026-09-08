@@ -94,6 +94,33 @@ def require_silence_preflight(analysis, *, evidence_path: Path | None = None) ->
             fail()
         if persisted != evidence:
             fail()
+    transition = audio_evidence.get('transition_safety')
+    transition_relative = audio_evidence.get('transition_evidence_id')
+    if transition is not None or transition_relative is not None:
+        if (not isinstance(transition, dict) or transition.get('status') != 'complete'
+                or transition.get('source_fingerprint') != source.get('fingerprint')
+                or transition.get('frame_rate') != rate_data
+                or transition_relative != 'analysis/transition-safety.json'
+                or not isinstance(transition.get('candidates'), list)):
+            fail()
+        records = {item.get('candidate_id'): item for item in transition['candidates'] if isinstance(item, dict)}
+        if len(records) != len(intervals) or set(records) != seen:
+            fail()
+        for candidate in intervals:
+            context = candidate['contextual_evidence']
+            record = records[candidate['candidate_id']]
+            if (record.get('l_cut_safe') != context.get('l_cut_safe')
+                    or record.get('source_handles_safe') != context.get('source_handles_safe')
+                    or record.get('lips_visible_near_cut') != context.get('lips_visible_near_cut')):
+                fail()
+        if evidence_path is not None:
+            transition_path = evidence_path.parent.parent / transition_relative
+            try:
+                persisted_transition = json.loads(transition_path.read_text(encoding='utf-8'))
+            except (OSError, json.JSONDecodeError):
+                fail()
+            if persisted_transition != transition:
+                fail()
     return evidence
 
 

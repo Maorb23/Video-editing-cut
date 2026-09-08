@@ -11,7 +11,7 @@ from tests.helpers import valid_plan
 from tests.test_planning import FakeModel, draft
 from tests import test_planning
 from video_editing.adaptive_silence import (SilenceSettings, calibrate_noise,
-                                            detect_quiet_intervals, requested_speech_padding_seconds,
+                                            boundary_audio_context, detect_quiet_intervals, requested_speech_padding_seconds,
                                             silence_policy, silence_settings_for_instruction)
 from video_editing.audio_transitions import audio_routes
 from video_editing.errors import PlanValidationError, VideoEditingError
@@ -22,6 +22,7 @@ from video_editing.planning import EditPlanner
 from video_editing.silence import parse_silence_output
 from video_editing.silence_edits import (PREFLIGHT_REQUIRED_MESSAGE, apply_silence_decisions,
                                          require_silence_preflight, silence_review_markdown)
+from video_editing.transition_evidence import enrich_transition_evidence
 
 
 class AdaptiveSilenceTests(unittest.TestCase):
@@ -79,6 +80,53 @@ class AdaptiveSilenceTests(unittest.TestCase):
         self.assertEqual(detect_quiet_intervals(
             windows,threshold_db=-40,window_seconds=.05,minimum_seconds=.25,
             duration_seconds=Fraction(11,20)),[(Fraction(1,5),Fraction(1,2))])
+
+    def test_boundary_audio_context_proves_speech_and_matching_room_tone(self):
+        windows = []
+        for index in range(26):
+            timestamp = Fraction(index, 20)
+            level = -15 if timestamp < Fraction(2, 5) or timestamp >= Fraction(9, 10) else -50
+            windows.append((timestamp, level))
+        candidate = {'id':'pause','start_seconds':'2/5','end_seconds':'9/10'}
+        context = boundary_audio_context(candidate, windows, -42)
+        self.assertEqual(context['status'], 'complete')
+        self.assertTrue(context['speech_before'])
+        self.assertTrue(context['speech_after'])
+        self.assertEqual(context['room_tone_difference'], 'low')
+        self.assertGreaterEqual(context['confidence'], .8)
+
+    def test_transition_evidence_authorizes_only_near_static_safe_l_cut(self):
+        candidate = {
+            'id':'pause','start_frame':30,'end_frame':60,'duration_frames':30,
+            'contextual_evidence':{'status':'complete','confidence':.95,'evidence_ids':['audio:pause'],
+                'speech_before':True,'speech_after':True,'room_tone_difference':'low',
+                'sentence_boundary':True,'non_speech':True,'emphasis_score':'low'},
+        }
+        evidence = {'source_fingerprint':'sha256:test','frame_rate':{'numerator':30,'denominator':1},
+                    'intervals':[candidate]}
+        runner = Mock()
+        runner.run.return_value = Mock(returncode=0,stdout='',stderr='SSIM Y:0.995 All:0.995 (23.0)')
+        safety = enrich_transition_evidence(
+            evidence,proxy=Path('proxy.mp4'),frame_rate=Fraction(30),duration_frames=120,
+            settings=SilenceSettings(),ffmpeg='ffmpeg',supervisor=runner,
+        )
+        self.assertTrue(safety['candidates'][0]['l_cut_safe'])
+        self.assertEqual(candidate['suggestion']['transition'],'l_cut')
+        self.assertFalse(candidate['contextual_evidence']['lips_visible_near_cut'])
+
+        moving_candidate = {
+            'id':'moving','start_frame':30,'end_frame':60,'duration_frames':30,
+            'contextual_evidence':{'status':'complete','confidence':.95,'evidence_ids':['audio:moving'],
+                'speech_before':True,'speech_after':True,'room_tone_difference':'low',
+                'sentence_boundary':True,'non_speech':True,'emphasis_score':'low'},
+        }
+        runner.run.return_value = Mock(returncode=0,stdout='',stderr='SSIM Y:0.85 All:0.85 (8.2)')
+        moving_safety = enrich_transition_evidence(
+            {**evidence,'intervals':[moving_candidate]},proxy=Path('proxy.mp4'),frame_rate=Fraction(30),
+            duration_frames=120,settings=SilenceSettings(),ffmpeg='ffmpeg',supervisor=runner,
+        )
+        self.assertFalse(moving_safety['candidates'][0]['l_cut_safe'])
+        self.assertEqual(moving_candidate['suggestion']['transition'],'synchronized')
 
     def test_eof_and_rational_frames_and_short_regions(self):
         result = parse_silence_output('silence_start: 1.001\nsilence_end: 1.701\nsilence_start: 2.002',

@@ -164,6 +164,46 @@ def detect_quiet_intervals(windows: list[tuple[Fraction, float]], *, threshold_d
     return intervals
 
 
+def boundary_audio_context(candidate: dict, windows: list[tuple[Fraction, float]], threshold_db: float) -> dict:
+    """Measure speech adjacency and room-tone continuity around a pause."""
+    start = Fraction(candidate["start_seconds"])
+    end = Fraction(candidate["end_seconds"])
+    edge = Fraction(2, 5)
+    room_edge = min(Fraction(1, 5), (end - start) / 2)
+
+    def levels(begin: Fraction, finish: Fraction) -> list[float]:
+        return [level for timestamp, level in windows if begin <= timestamp < finish and math.isfinite(level)]
+
+    before = levels(max(Fraction(0), start - edge), start)
+    after = levels(end, end + edge)
+    left_room = levels(start, start + room_edge)
+    right_room = levels(max(start, end - room_edge), end)
+    speech_floor = threshold_db + 3
+    speech_before = sum(level > speech_floor for level in before) >= 2
+    speech_after = sum(level > speech_floor for level in after) >= 2
+    room_delta = (abs(statistics.median(left_room) - statistics.median(right_room))
+                  if left_room and right_room else None)
+    room_tone = "low" if room_delta is not None and room_delta <= 3 else "high" if room_delta is not None else "unavailable"
+    complete = len(before) >= 2 and len(after) >= 2 and room_delta is not None
+    confidence = min(.95, .82 + .01 * min(13, len(before) + len(after))) if complete else 0.
+    return {
+        "status": "complete" if complete else "partial",
+        "confidence": confidence,
+        "evidence_ids": [f"analysis/silence.json#{candidate['id']}:audio-boundary"] if complete else [],
+        "speech_before": speech_before,
+        "speech_after": speech_after,
+        "sentence_boundary": True,
+        "non_speech": True,
+        "emphasis_score": "low" if speech_before and speech_after else "unknown",
+        "room_tone_difference": room_tone,
+        "room_tone_delta_db": room_delta,
+        "audio_window_counts": {"before": len(before), "after": len(after), "left_room": len(left_room), "right_room": len(right_room)},
+        "l_cut_safe": False,
+        "j_cut_safe": False,
+        "method": "rms-boundary-context/v1",
+    }
+
+
 def analyze_audio(source, *, frame_rate, ffmpeg, threshold_db, settings, duration_seconds, supervisor,
                   timeline_duration_frames: int | None = None, source_fingerprint=None):
     from .silence import parse_silence_output
@@ -228,10 +268,11 @@ def analyze_audio(source, *, frame_rate, ffmpeg, threshold_db, settings, duratio
         evidence_id='analysis/silence.json',
     )
     for item in evidence['intervals']:
+        context = boundary_audio_context(item, windows, selected)
         item.update(candidate_id=item['id'], evidence_id=f"analysis/silence.json#{item['id']}",
                     threshold_db=selected, confidence=calibration['confidence'],
                     source_fingerprint=source_fingerprint,
-                    contextual_evidence={'status': 'unavailable', 'confidence': 0., 'evidence_ids': []})
+                    contextual_evidence=context)
         item['suggestion'] = silence_policy(item, frame_rate, settings)
     return evidence
 
